@@ -1,0 +1,18 @@
+# Projucerが生成するフォルダを除外
+/Builds
+/JuceLibraryCode
+
+# JUCEライブラリ本体（もしフォルダ内にコピーしている場合）
+/JUCE
+
+# Visual Studioの一時ファイル
+.vs/
+*.user
+*.suo
+x64/
+Debug/
+Release/
+
+# OSの管理ファイル
+.DS_Store
+Thumbs.db
