@@ -2,37 +2,37 @@
 
 AnalyzerEngine::AnalyzerEngine()
 {
-    // すべての使用可能なプラグインフォーマット
-   #if JUCE_PLUGINHOST_VST3
+    // Register all available plugin formats
+#if JUCE_PLUGINHOST_VST3
     formatManager.addFormat(new juce::VST3PluginFormat());
-   #endif
+#endif
+
+#if JUCE_MAC
+ #if JUCE_PLUGINHOST_AU
+    formatManager.addFormat(new juce::AudioUnitPluginFormat());
+ #endif
+#endif
+
+#if JUCE_LINUX
+ #if JUCE_PLUGINHOST_LADSPA
+    formatManager.addFormat(new juce::LADSPAPluginFormat());
+ #endif
+
+ #if JUCE_PLUGINHOST_LV2
+    formatManager.addFormat(new juce::LV2PluginFormat());
+ #endif
+#endif
     
-   #if JUCE_MAC
-    #if JUCE_PLUGINHOST_AU
-     formatManager.addFormat(new juce::AudioUnitPluginFormat());
-    #endif
-   #endif
-    
-   #if JUCE_LINUX
-    #if JUCE_PLUGINHOST_LADSPA
-     formatManager.addFormat(new juce::LADSPAPluginFormat());
-    #endif
-    
-    #if JUCE_PLUGINHOST_LV2
-     formatManager.addFormat(new juce::LV2PluginFormat());
-    #endif
-   #endif
-    
-    // FFTと窓を初期化
+    // Initialize FFT and window
     forwardFFT = std::make_unique<juce::dsp::FFT>(fftOrder);
     window = std::make_unique<juce::dsp::WindowingFunction<float>>(fftSize, juce::dsp::WindowingFunction<float>::hann);
     
-    // FFTのデフォのサイズを初期化
+    // Initialize with default FFT size
     resizeFFTBuffers();
     
     scopeData.resize(scopeFifoSize, 0.0f);
     
-    harmonicLevels.resize(10, 0.0f);
+    harmonicLevels.resize(10, 0.0f); // Store up to 10 harmonics
     
     DBG("Registered plugin formats: " << formatManager.getNumFormats());
 }
@@ -41,12 +41,9 @@ AnalyzerEngine::~AnalyzerEngine()
 {
 }
 
-/**
- * @brief FFT関連のバッファをリサイズする
- */
 void AnalyzerEngine::resizeFFTBuffers()
 {
-	// 実数専用変換のサイズは2 * fftSize(出力が複素数だから)
+    // Size for Real-Only transform is 2 * fftSize because output is complex
     fftDataL.resize(fftSize * 2, 0.0f);
     fftDataR.resize(fftSize * 2, 0.0f);
     
@@ -63,34 +60,25 @@ void AnalyzerEngine::resizeFFTBuffers()
     accumulationBufferR.resize(fftSize, 0.0f);
 }
 
-/**
- * @brief FFTオーダーを設定する
- * @param newFftOrder FFTオーダー (8 〜 15)
- */
 void AnalyzerEngine::setFFTOrder(int newFftOrder)
 {
     if (newFftOrder < 8 || newFftOrder > 15)
-        return; // クランプ
+        return; // Clamp to reasonable range
     
     fftOrder = newFftOrder;
     fftSize = 1 << fftOrder;
     
-	// FFTと窓を再初期化
+    // Recreate FFT and window
     forwardFFT = std::make_unique<juce::dsp::FFT>(fftOrder);
     window = std::make_unique<juce::dsp::WindowingFunction<float>>(fftSize, juce::dsp::WindowingFunction<float>::hann);
     
-	// すべてのバッファを再初期化
+    // Resize all buffers
     resizeFFTBuffers();
     
-	// 解析状態をリセット
+    // Reset analysis state
     accumulationIndex = 0;
 }
 
-/**
- * @brief サンプルレートとブロックサイズを設定する
- * @param sampleRate サンプルレート
- * @param blockSize ブロックサイズ
- */
 void AnalyzerEngine::prepare(double sampleRate, int blockSize)
 {
     signalGenerator.prepare(sampleRate, blockSize);
@@ -103,26 +91,18 @@ void AnalyzerEngine::prepare(double sampleRate, int blockSize)
     performanceData.bufferSize = blockSize;
 }
 
-/**
- * @brief ブロックサイズを設定する
- */
 void AnalyzerEngine::setBlockSize(int /*newBlockSize*/)
 {
-    
+    // Re-prepare if needed
+    // In this simple context, we just wait for the next prepare call from MainComponent usually
 }
 
-/**
- * @brief プラグインをロードする
- * @param file プラグインファイルのパス
- * @return ロード成功ならtrue、失敗ならfalse
- */
 bool AnalyzerEngine::loadPlugin(const juce::File& file)
 {
-    if (!file.existsAsFile()) 
-        return false;
+    if (!file.existsAsFile()) return false;
 
     juce::OwnedArray<juce::PluginDescription> foundPlugins;
-	// フォーマットマネージャーを使ってプラグインタイプを検索
+    // Iterate formats
     for (auto format : formatManager.getFormats())
     {
         format->findAllTypesForFile(foundPlugins, file.getFullPathName());
@@ -131,15 +111,15 @@ bool AnalyzerEngine::loadPlugin(const juce::File& file)
     if (foundPlugins.size() > 0)
     {
         juce::String error;
-		// 使えるプラグインタイプが見つかったらインスタンスを作成
+        // Verify formatManager is AudioPluginFormatManager
         pluginInstance = formatManager.createPluginInstance(*foundPlugins[0], 44100.0, 512, error);
         
         if (pluginInstance)
         {
             DBG("Plugin Loaded: " << pluginInstance->getName());
             pluginInstance->prepareToPlay(44100.0, 512);
-            triggerImpulseAnalysis();
-            sendChangeMessage();
+            triggerImpulseAnalysis(); // Auto start analysis
+            sendChangeMessage(); // Notify UI
             return true;
         }
         else
@@ -155,18 +135,12 @@ bool AnalyzerEngine::loadPlugin(const juce::File& file)
     return false;
 }
 
-/**
- * @brief プラグインをアンロードする
- */
 void AnalyzerEngine::unloadPlugin()
 {
     pluginInstance = nullptr;
     sendChangeMessage();
 }
 
-/**
- * @brief インパルス応答解析をトリガーする
- */
 void AnalyzerEngine::triggerImpulseAnalysis()
 {
     signalGenerator.reset();
@@ -178,61 +152,40 @@ void AnalyzerEngine::triggerImpulseAnalysis()
     std::fill(fftDataR.begin(), fftDataR.end(), 0.0f);
 }
 
-/**
- * @brief 解析モードを設定する
- * @param mode 解析モード
- */
 void AnalyzerEngine::setAnalysisMode(AnalysisMode mode)
 {
     if (currentMode != mode)
     {
         currentMode = mode;
-        triggerImpulseAnalysis();
+        triggerImpulseAnalysis(); // Reset state
     }
 }
 
-/**
- * @brief テスト信号の振幅を設定する
- * @param amplitude 振幅 (0.0f 〜 1.0f)
- */
 void AnalyzerEngine::setInputAmplitude(float amplitude)
 {
     signalGenerator.setAmplitude(amplitude);
 }
 
-/**
- * @brief テスト信号の振幅を取得する
- */
 float AnalyzerEngine::getInputAmplitude() const
 {
     return signalGenerator.getAmplitude();
 }
 
-/**
- * @brief テスト信号の周波数を設定する
- * @param frequency 周波数 (Hz)
- */
 void AnalyzerEngine::setTestFrequency(double frequency)
 {
     signalGenerator.setFrequency(frequency);
 }
 
-/**
- * @brief テスト信号の周波数を取得する
- */
 double AnalyzerEngine::getTestFrequency() const
 {
     return signalGenerator.getFrequency();
 }
 
-/**
- * @brief THDとTHD+Nを計算する
- */
 void AnalyzerEngine::calculateTHD()
 {
-	// THDとTHD+Nの計算
+    // Calculate THD from magnitude spectrum (Left channel)
     double testFreq = signalGenerator.getFrequency();
-    double binWidth = 44100.0 / fftSize;
+    double binWidth = 44100.0 / fftSize; // Sample rate / FFT size
     
     int fundamentalBin = (int)(testFreq / binWidth + 0.5);
     
@@ -243,14 +196,14 @@ void AnalyzerEngine::calculateTHD()
         return;
     }
     
-	// 基音の大きさを取得
+    // Get fundamental magnitude (in linear scale)
     float fundamentalMag = juce::Decibels::decibelsToGain(magnitudeSpectrumL[fundamentalBin]);
     
-	// 高調波の合計を計算
+    // Calculate harmonic magnitudes
     double sumHarmonicsSquared = 0.0;
     double sumAllNoiseSquared = 0.0;
     
-	for (int h = 2; h <= 10; ++h) // 2次から10次までの高調波
+    for (int h = 2; h <= 10; ++h) // Up to 10th harmonic
     {
         int harmonicBin = fundamentalBin * h;
         if (harmonicBin >= fftSize / 2) break;
@@ -262,7 +215,7 @@ void AnalyzerEngine::calculateTHD()
             harmonicLevels[h - 2] = magnitudeSpectrumL[harmonicBin];
     }
     
-	// ノイズ成分の合計を計算（高調波以外のすべての成分）
+    // Calculate total noise (excluding fundamental and harmonics)
     for (int i = 1; i < fftSize / 2; ++i)
     {
         bool isHarmonic = false;
@@ -282,33 +235,30 @@ void AnalyzerEngine::calculateTHD()
         }
     }
     
-	// THD = sqrt(sum of harmonics squared) / fundamental
+    // THD = sqrt(sum of harmonics squared) / fundamental
     currentTHD = (float)(std::sqrt(sumHarmonicsSquared) / fundamentalMag) * 100.0f;
     
     // THD+N = sqrt(sum of harmonics + noise squared) / fundamental
     currentTHDPlusN = (float)(std::sqrt(sumHarmonicsSquared + sumAllNoiseSquared) / fundamentalMag) * 100.0f;
 }
 
-/**
- * @brief IMDを計算する
- */
 void AnalyzerEngine::calculateIMD()
 {
-	// IMDの計算
+    // Simplified IMD calculation (SMPTE method)
+    // Measure intermodulation products at f2 +/- f1, f2 +/- 2*f1, etc.
+    
+    // double binWidth = 44100.0 / fftSize; // Unused variable warning fix
+    
+    // For now, just set to 0 - full IMD implementation would require dual-tone setup
     currentIMD = 0.0f;
 }
 
-/**
- * @brief ダイナミクスを解析する
- * @param inputBuffer 入力オーディオバッファ
- * @param outputBuffer 出力オーディオバッファ
- */
 void AnalyzerEngine::analyzeDynamics(const juce::AudioBuffer<float>& inputBuffer, const juce::AudioBuffer<float>& outputBuffer)
 {
-	// 圧縮率の推定
+    // Analyze compression/expansion characteristics
     int numSamples = inputBuffer.getNumSamples();
     
-	// RMSレベルを計算
+    // Calculate RMS for input and output
     auto calculateRMS = [](const float* data, int samples) -> float {
         float sumSquares = 0.0f;
         for (int i = 0; i < samples; ++i)
@@ -322,18 +272,18 @@ void AnalyzerEngine::analyzeDynamics(const juce::AudioBuffer<float>& inputBuffer
     float inputDB = juce::Decibels::gainToDecibels(inputRMS, -100.0f);
     float outputDB = juce::Decibels::gainToDecibels(outputRMS, -100.0f);
     
-	// データを保存
+    // Store data point
     dynamicsData.inputLevels.push_back(inputDB);
     dynamicsData.outputLevels.push_back(outputDB);
     
-	// 古いデータを削除
+    // Keep only recent data (for performance)
     if (dynamicsData.inputLevels.size() > 1000)
     {
         dynamicsData.inputLevels.erase(dynamicsData.inputLevels.begin());
         dynamicsData.outputLevels.erase(dynamicsData.outputLevels.begin());
     }
     
-	// 圧縮率を推定
+    // Estimate compression ratio from recent data
     if (dynamicsData.inputLevels.size() > 10)
     {
         int n = (int)dynamicsData.inputLevels.size();
@@ -347,40 +297,36 @@ void AnalyzerEngine::analyzeDynamics(const juce::AudioBuffer<float>& inputBuffer
     }
 }
 
-/**
- * @brief エンベロープを解析する
- * @param buffer 入力オーディオバッファ
- */
 void AnalyzerEngine::analyzeEnvelope(const juce::AudioBuffer<float>& buffer)
 {
-	// エンベロープの計算
+    // Analyze attack and release envelope characteristics
     int numSamples = buffer.getNumSamples();
     const float* data = buffer.getReadPointer(0);
     
-	// エンベロープデータを更新
+    // Calculate envelope (peak detection with smoothing)
     for (int i = 0; i < numSamples; ++i)
     {
         float absValue = std::abs(data[i]);
         
-		// サンプリングポイントを時間に変換
+        // Simple time point (in seconds)
         float timePoint = (float)envelopeData.envelopeValues.size() / 44100.0f;
         
         envelopeData.timePoints.push_back(timePoint);
         envelopeData.envelopeValues.push_back(absValue);
     }
     
-	// 古いデータを削除
-	if (envelopeData.envelopeValues.size() > 44100 * 10) // 最大10秒分
+    // Keep only recent envelope data
+    if (envelopeData.envelopeValues.size() > 44100 * 10) // Max 10 seconds
     {
         int excess = (int)envelopeData.envelopeValues.size() - 44100 * 10;
         envelopeData.timePoints.erase(envelopeData.timePoints.begin(), envelopeData.timePoints.begin() + excess);
         envelopeData.envelopeValues.erase(envelopeData.envelopeValues.begin(), envelopeData.envelopeValues.begin() + excess);
     }
     
-	// アタックタイムの計算
+    // Estimate attack and release times from envelope data
     if (envelopeData.envelopeValues.size() > 100)
     {
-		// 最後の100サンプルでの最大値を取得
+        // Find attack time (10% to 90% rise time)
         float maxVal = *std::max_element(envelopeData.envelopeValues.end() - 100, envelopeData.envelopeValues.end());
         float threshold10 = maxVal * 0.1f;
         float threshold90 = maxVal * 0.9f;
@@ -401,22 +347,18 @@ void AnalyzerEngine::analyzeEnvelope(const juce::AudioBuffer<float>& buffer)
     }
 }
 
-/**
- * @brief パフォーマンスメトリクスを更新する
- * @param processingTimeMs 処理時間（ミリ秒）
- */
 void AnalyzerEngine::updatePerformanceMetrics(double processingTimeMs)
 {
-	// 処理時間履歴を更新
+    // Add to history
     performanceData.processingTimeHistory.push_back((float)processingTimeMs);
     
-	// 履歴が100を超えたら古いデータを削除
+    // Keep only recent 100 measurements
     if (performanceData.processingTimeHistory.size() > 100)
     {
         performanceData.processingTimeHistory.erase(performanceData.processingTimeHistory.begin());
     }
     
-	// 平均とピーク処理時間を計算
+    // Calculate average
     float sum = 0.0f;
     float peak = 0.0f;
     for (float time : performanceData.processingTimeHistory)
@@ -429,18 +371,15 @@ void AnalyzerEngine::updatePerformanceMetrics(double processingTimeMs)
     performanceData.averageProcessingTime = sum / performanceData.processingTimeHistory.size();
     performanceData.peakProcessingTime = peak;
     
-	// CPU使用率を計算
+    // Calculate CPU usage percentage
+    // Available time = buffer size / sample rate (in milliseconds)
     double availableTimeMs = (lastBufferSize / lastSampleRate) * 1000.0;
     performanceData.cpuUsagePercent = (float)((processingTimeMs / availableTimeMs) * 100.0);
 }
 
-/**
- * @brief オーディオバッファを処理し、解析を行う
- * @param buffer 入力および出力のオーディオバッファ
- */
 void AnalyzerEngine::processAudio(juce::AudioBuffer<float>& buffer)
 {
-	// 解析モードに基づいて信号を生成し、プラグインを処理し、FFT解析を行う
+    // In Harmonic/WhiteNoise/SineSweep/THDSweep/Performance mode, we always run. In Linear, we wait for trigger.
     if (currentMode == AnalysisMode::Linear && !isAnalyzing) return;
     if (currentMode == AnalysisMode::Harmonic || 
         currentMode == AnalysisMode::WhiteNoise || 
@@ -453,7 +392,7 @@ void AnalyzerEngine::processAudio(juce::AudioBuffer<float>& buffer)
 
     int numSamples = buffer.getNumSamples();
     
-	// 信号生成
+    // 1. Generate Signal
     TestSignalGenerator::SignalType sigType;
     
     switch (currentMode)
@@ -479,7 +418,7 @@ void AnalyzerEngine::processAudio(juce::AudioBuffer<float>& buffer)
             sigType = TestSignalGenerator::SignalType::AttackRelease;
             break;
         case AnalysisMode::Performance:
-            sigType = TestSignalGenerator::SignalType::Sine;
+            sigType = TestSignalGenerator::SignalType::Sine;  // Use sine wave for performance testing
             break;
         default:
             sigType = TestSignalGenerator::SignalType::Impulse;
@@ -491,32 +430,32 @@ void AnalyzerEngine::processAudio(juce::AudioBuffer<float>& buffer)
     if (buffer.getNumChannels() > 1)
         buffer.copyFrom(1, 0, buffer, 0, 0, numSamples);
 
-	// 保存用に入力バッファをコピー
+    // Store input buffer for dynamics analysis
     juce::AudioBuffer<float> inputBuffer(buffer.getNumChannels(), numSamples);
     for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
         inputBuffer.copyFrom(ch, 0, buffer, ch, 0, numSamples);
 
-	// プラグイン処理
+    // 2. Process Plugin with performance measurement
     if (pluginInstance)
     {
-		// 開始タイミング
+        // Start timing
         auto startTime = juce::Time::getMillisecondCounterHiRes();
         
         juce::MidiBuffer midi;
         pluginInstance->processBlock(buffer, midi);
         
-		// 終了タイミング
+        // End timing
         auto endTime = juce::Time::getMillisecondCounterHiRes();
         double processingTimeMs = endTime - startTime;
         
-		// パフォーマンス解析の更新
+        // Update performance metrics
         if (currentMode == AnalysisMode::Performance)
         {
             updatePerformanceMetrics(processingTimeMs);
         }
     }
 
-	// DynamicsとHammersteinの解析
+    // 3. Dynamics Analysis (for Dynamics and Hammerstein modes)
     if (currentMode == AnalysisMode::Dynamics)
     {
         analyzeDynamics(inputBuffer, buffer);
@@ -526,7 +465,7 @@ void AnalyzerEngine::processAudio(juce::AudioBuffer<float>& buffer)
         analyzeEnvelope(buffer);
     }
 
-	// FFT解析
+    // 4. FFT Analysis
     if (accumulationIndex < fftSize)
     {
         auto* channelDataL = buffer.getReadPointer(0);
@@ -541,14 +480,14 @@ void AnalyzerEngine::processAudio(juce::AudioBuffer<float>& buffer)
         }
         accumulationIndex += samplesToCopy;
 
-		// FFTサイズに達したら処理
+        // If block filled
         if (accumulationIndex >= fftSize)
         {
-			 // Process Left
+             // Process Left (Real-Only -> Complex)
              std::fill(complexDataL.begin(), complexDataL.end(), 0.0f);
              std::copy(accumulationBufferL.begin(), accumulationBufferL.end(), complexDataL.begin());
              
-			 // 窓関数の適用
+             // Apply windowing for continuous signals
              if (currentMode == AnalysisMode::Harmonic || 
                  currentMode == AnalysisMode::WhiteNoise || 
                  currentMode == AnalysisMode::SineSweep ||
@@ -579,7 +518,7 @@ void AnalyzerEngine::processAudio(juce::AudioBuffer<float>& buffer)
              
              forwardFFT->performRealOnlyForwardTransform(complexDataR.data());
              
-			 // MagnitudeとPhaseの抽出
+             // Extract Mag/Phase
              auto extract = [&](const std::vector<float>& complexData, std::vector<float>& magData, std::vector<float>& phaseData) {
                  for (int i = 0; i < fftSize / 2; ++i)
                  {
@@ -590,7 +529,7 @@ void AnalyzerEngine::processAudio(juce::AudioBuffer<float>& buffer)
                          re = complexData[0];
                          im = 0.0f;
                      } else if (i == fftSize / 2 - 1) {
-						 // Nyquist周波数成分
+                         // Nyquist case
                      }
                      
                      if (i > 0 && i < fftSize / 2) {
@@ -610,7 +549,7 @@ void AnalyzerEngine::processAudio(juce::AudioBuffer<float>& buffer)
              extract(complexDataL, magnitudeSpectrumL, phaseSpectrumL);
              extract(complexDataR, magnitudeSpectrumR, phaseSpectrumR);
              
-			 // THDまたはIMDの計算
+             // Calculate THD/IMD if in appropriate mode
              if (currentMode == AnalysisMode::Harmonic || 
                  currentMode == AnalysisMode::THDSweep)
              {
@@ -621,7 +560,7 @@ void AnalyzerEngine::processAudio(juce::AudioBuffer<float>& buffer)
                  calculateIMD();
              }
              
-			 // 解析完了後のリセット
+             // Reset for next block
              accumulationIndex = 0;
              if (currentMode == AnalysisMode::Linear) 
              {
@@ -635,44 +574,28 @@ void AnalyzerEngine::processAudio(juce::AudioBuffer<float>& buffer)
         }
     }
     
-	// スコープ用FIFOにデータを追加
+    // 5. Oscilloscope Update
     addToScopeFifo(buffer.getReadPointer(0), buffer.getNumSamples());
 }
 
-/**
- * @brief スコープFIFOにデータを追加する
- * @param data 追加するデータ配列
- * @param numSamples 追加するサンプル数
- */
 void AnalyzerEngine::addToScopeFifo(const float* data, int numSamples)
 {
     int start1, size1, start2, size2;
     scopeFifo.prepareToWrite(numSamples, start1, size1, start2, size2);
     
-    if (size1 > 0)
-        std::copy(data, data + size1, scopeData.begin() + start1);
-    
-    if (size2 > 0) 
-        std::copy(data + size1, data + size1 + size2, scopeData.begin() + start2);
+    if (size1 > 0) std::copy(data, data + size1, scopeData.begin() + start1);
+    if (size2 > 0) std::copy(data + size1, data + size1 + size2, scopeData.begin() + start2);
     
     scopeFifo.finishedWrite(size1 + size2);
 }
 
-/**
- * @brief スコープFIFOからデータを読み取る
- * @param dest データの格納先配列
- * @param numSamples 読み取るサンプル数
- */
 int AnalyzerEngine::readFromScopeFifo(float* dest, int numSamples)
 {
     int start1, size1, start2, size2;
     scopeFifo.prepareToRead(numSamples, start1, size1, start2, size2);
     
-    if (size1 > 0) 
-        std::copy(scopeData.begin() + start1, scopeData.begin() + start1 + size1, dest);
-    
-    if (size2 > 0) 
-        std::copy(scopeData.begin() + start2, scopeData.begin() + start2 + size2, dest + size1);
+    if (size1 > 0) std::copy(scopeData.begin() + start1, scopeData.begin() + start1 + size1, dest);
+    if (size2 > 0) std::copy(scopeData.begin() + start2, scopeData.begin() + start2 + size2, dest + size1);
     
     scopeFifo.finishedRead(size1 + size2);
     return size1 + size2;

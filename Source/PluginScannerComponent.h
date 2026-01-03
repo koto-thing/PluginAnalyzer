@@ -89,14 +89,15 @@ private:
             juce::File dir(path);
             if (dir.isDirectory())
             {
-                // 再帰的に処理
-                juce::RangedDirectoryIterator iter(dir, true, "*", juce::File::findFiles);
-                for (auto& file : iter)
+                // 再帰的に
+                juce::DirectoryIterator iter(dir, true, "*", juce::File::findFiles);
+                while (iter.next())
                 {
+                    auto file = iter.getFile();
                     for (auto format : formatManager.getFormats())
                     {
                         juce::OwnedArray<juce::PluginDescription> found;
-                        format->findAllTypesForFile(found, file.getFile().getFullPathName());
+                        format->findAllTypesForFile(found, file.getFullPathName());
                         for (auto* desc : found)
                         {
                             knownPluginList.addType(*desc);

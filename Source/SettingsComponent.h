@@ -10,21 +10,16 @@ public:
     {
         int bufferSize = 512;
         double sampleRate = 48000.0;
-        int fftOrder = 11;  // 2^11 = 2048
-        
-        // オーディオデバイス設定
+        int fftOrder = 11;
         juce::String audioDeviceName;
         int numInputChannels = 2;
         int numOutputChannels = 2;
-        
-        // スキャンするプラグインフォルダのパス
         juce::StringArray pluginScanPaths;
     };
     
     SettingsComponent(Settings& settings)
         : currentSettings(settings)
     {
-        // バッファサイズ
         addAndMakeVisible(bufferSizeLabel);
         bufferSizeLabel.setText("Buffer Size:", juce::dontSendNotification);
         bufferSizeLabel.setColour(juce::Label::textColourId, juce::Colours::white);
@@ -38,11 +33,8 @@ public:
         bufferSizeCombo.addItem("2048", 6);
         bufferSizeCombo.addItem("4096", 7);
         
-        // 現在の値をセット
-        int bufferIndex = getBufferSizeIndex(settings.bufferSize);
-        bufferSizeCombo.setSelectedId(bufferIndex, juce::dontSendNotification);
+        bufferSizeCombo.setSelectedId(getBufferSizeIndex(settings.bufferSize), juce::dontSendNotification);
         
-        // サンプルレート
         addAndMakeVisible(sampleRateLabel);
         sampleRateLabel.setText("Sample Rate:", juce::dontSendNotification);
         sampleRateLabel.setColour(juce::Label::textColourId, juce::Colours::white);
@@ -54,11 +46,8 @@ public:
         sampleRateCombo.addItem("96000 Hz", 4);
         sampleRateCombo.addItem("192000 Hz", 5);
         
-        // 現在の値を設定
-        int rateIndex = getSampleRateIndex(settings.sampleRate);
-        sampleRateCombo.setSelectedId(rateIndex, juce::dontSendNotification);
+        sampleRateCombo.setSelectedId(getSampleRateIndex(settings.sampleRate), juce::dontSendNotification);
         
-        // FFTのオーダー
         addAndMakeVisible(fftOrderLabel);
         fftOrderLabel.setText("FFT Size:", juce::dontSendNotification);
         fftOrderLabel.setColour(juce::Label::textColourId, juce::Colours::white);
@@ -71,11 +60,8 @@ public:
         fftOrderCombo.addItem("8192 (2^13)", 5);
         fftOrderCombo.addItem("16384 (2^14)", 6);
         
-        // 現在の値を設定
-        int fftIndex = getFftOrderIndex(settings.fftOrder);
-        fftOrderCombo.setSelectedId(fftIndex, juce::dontSendNotification);
+        fftOrderCombo.setSelectedId(getFftOrderIndex(settings.fftOrder), juce::dontSendNotification);
         
-        // プラグインのパスを設定
         addAndMakeVisible(pluginPathsLabel);
         pluginPathsLabel.setText("Plugin Scan Paths:", juce::dontSendNotification);
         pluginPathsLabel.setColour(juce::Label::textColourId, juce::Colours::white);
@@ -93,7 +79,6 @@ public:
         removePathButton.setButtonText("Remove");
         removePathButton.onClick = [this] { removeSelectedPath(); };
         
-        // ボタン
         addAndMakeVisible(applyButton);
         applyButton.setButtonText("Apply");
         applyButton.onClick = [this] { applySettings(); };
@@ -105,7 +90,6 @@ public:
                 parent->exitModalState(0);
         };
         
-        // Infoラベル
         addAndMakeVisible(infoLabel);
         infoLabel.setText("Note: Changing these settings will restart audio processing", juce::dontSendNotification);
         infoLabel.setColour(juce::Label::textColourId, juce::Colour(0xffff6b35));
@@ -117,10 +101,8 @@ public:
     void paint(juce::Graphics& g) override
     {
         g.fillAll(juce::Colour(0xff1a1a1a));
-        
         g.setColour(juce::Colour(0xff00a0ff));
         g.drawRect(getLocalBounds(), 2);
-        
         g.setColour(juce::Colours::white);
         g.setFont(juce::Font(juce::FontOptions(20.0f, juce::Font::bold)));
         g.drawText("Analyzer Settings", 10, 10, getWidth() - 20, 30, juce::Justification::centred);
@@ -158,11 +140,9 @@ public:
         pathListBox.setBounds(bounds.removeFromTop(120));
         
         bounds.removeFromTop(10);
-        
         infoLabel.setBounds(bounds.removeFromTop(30));
         
         bounds.removeFromTop(10);
-        
         auto buttonRow = bounds.removeFromTop(40);
         cancelButton.setBounds(buttonRow.removeFromLeft(buttonRow.getWidth() / 2).reduced(5));
         applyButton.setBounds(buttonRow.reduced(5));
@@ -170,10 +150,7 @@ public:
     
     std::function<void(const Settings&)> onSettingsChanged;
     
-    int getNumRows() override
-    {
-        return currentSettings.pluginScanPaths.size();
-    }
+    int getNumRows() override { return currentSettings.pluginScanPaths.size(); }
     
     void paintListBoxItem(int rowNumber, juce::Graphics& g, int width, int height, bool rowIsSelected) override
     {
@@ -210,6 +187,8 @@ private:
     
     juce::TextButton applyButton;
     juce::TextButton cancelButton;
+    
+    std::unique_ptr<juce::FileChooser> fileChooser;
     
     int getBufferSizeIndex(int bufferSize)
     {
@@ -314,9 +293,9 @@ private:
         fileChooser = std::make_unique<juce::FileChooser>("Select Plugin Folder",
             juce::File::getSpecialLocation(juce::File::userHomeDirectory));
         
-        auto browserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories;
+        auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories;
         
-        fileChooser->launchAsync(browserFlags, [this](const juce::FileChooser& fc) {
+        fileChooser->launchAsync(flags, [this](const juce::FileChooser& fc) {
             auto folder = fc.getResult();
             if (folder.exists() && folder.isDirectory())
             {
@@ -339,8 +318,6 @@ private:
             pathListBox.updateContent();
         }
     }
-    
-    std::unique_ptr<juce::FileChooser> fileChooser;
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SettingsComponent)
 };
