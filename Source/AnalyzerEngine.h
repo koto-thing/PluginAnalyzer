@@ -26,15 +26,15 @@ public:
 
     enum class AnalysisMode
     {
-		Linear,         // ƒCƒ“ƒpƒ‹ƒX‰“š
-		Harmonic,       // harmonic•ªÍ
-		Hammerstein,    // Hammerstein-Wienerƒ‚ƒfƒ‹
-		WhiteNoise,     // ƒzƒƒCƒgƒmƒCƒY
-        SineSweep,      // SinƒXƒC[ƒv
-		THDSweep,       // THDƒXƒC[ƒv
-		IMD,            // IMD•ªÍ
-		Dynamics,       // ƒ_ƒCƒiƒ~ƒNƒX•ªÍ
-		Performance     // ƒpƒtƒH[ƒ}ƒ“ƒX•ªÍ
+		Linear,         // ã‚¤ãƒ³ãƒ‘ãƒ«ã‚¹å¿œç­”
+		Harmonic,       // harmonicåˆ†æ
+		Hammerstein,    // Hammerstein-Wienerãƒ¢ãƒ‡ãƒ«
+		WhiteNoise,     // ãƒ›ãƒ¯ã‚¤ãƒˆãƒã‚¤ã‚º
+        SineSweep,      // Sinã‚¹ã‚¤ãƒ¼ãƒ—
+		THDSweep,       // THDã‚¹ã‚¤ãƒ¼ãƒ—
+		IMD,            // IMDåˆ†æ
+		Dynamics,       // ãƒ€ã‚¤ãƒŠãƒŸã‚¯ã‚¹åˆ†æ
+		Performance     // ãƒ‘ãƒ•ã‚©ãƒ¼ãƒãƒ³ã‚¹åˆ†æ
     };
 
     void setAnalysisMode(AnalysisMode mode);
@@ -90,7 +90,7 @@ public:
     void processAudio(juce::AudioBuffer<float>& buffer);
     void triggerImpulseAnalysis();
     
-    // ƒf[ƒ^ƒAƒNƒZƒX—p
+    // ãƒ‡ãƒ¼ã‚¿ã‚¢ã‚¯ã‚»ã‚¹ç”¨
     const std::vector<float>& getMagnitudeSpectrumL() const { return magnitudeSpectrumL; }
     const std::vector<float>& getMagnitudeSpectrumR() const { return magnitudeSpectrumR; }
     const std::vector<float>& getPhaseSpectrumL() const { return phaseSpectrumL; }
@@ -123,7 +123,7 @@ private:
     std::unique_ptr<juce::dsp::FFT> forwardFFT;
     std::unique_ptr<juce::dsp::WindowingFunction<float>> window;
     
-    // ƒXƒeƒŒƒI
+    // ã‚¹ãƒ†ãƒ¬ã‚ª
     std::vector<float> fftDataL;
     std::vector<float> fftDataR;
     

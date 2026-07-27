@@ -28,22 +28,58 @@ A professional-grade audio plugin analysis tool built with the JUCE framework. T
 
 ### Prerequisites
 
-*   **C++ Compiler:** Visual Studio 2022 (Windows), Xcode (macOS), or GCC (Linux).
-*   **JUCE Framework:** The Projucer is required to manage the project, or you can use CMake/VS directly if configured.
-*   **VST3 SDK:** (Optional but recommended) For hosting VST3 plugins.
+*   **CMake:** Version 3.22 or newer.
+*   **C++ Compiler:** Visual Studio 2026 (Windows), Xcode (macOS), or a C++17-capable GCC/Clang toolchain (Linux).
+*   **Git:** Required by CMake to fetch the pinned JUCE dependency on the first configure.
 
-### Building
+JUCE 8.0.13 is fetched automatically and pinned by `CMakeLists.txt`. A separately
+installed Projucer or VST3 SDK is not required for the normal CMake build.
 
-1.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/yourusername/PluginAnalyzer.git
-    ```
-2.  **Open the Project:**
-    *   Open `PluginAnalyzer.sln` in Visual Studio.
-    *   Or open the `.jucer` file in the Projucer and save to your target IDE.
-3.  **Build:**
-    *   Select your configuration (Debug/Release) and platform (x64).
-    *   Build the solution.
+### Building on Windows
+
+```powershell
+git clone https://github.com/koto-thing/PluginAnalyzer.git
+cd PluginAnalyzer
+cmake --preset vs2026
+cmake --build --preset vs2026-debug
+```
+
+The application is generated under:
+
+```text
+out/build/vs2026/PluginAnalyzer_artefacts/Debug/
+```
+
+Use `vs2026-release` instead of `vs2026-debug` for a Release build.
+
+### Building with Ninja
+
+Install Ninja and a suitable compiler environment, then run:
+
+```bash
+cmake --preset ninja-debug
+cmake --build --preset ninja-debug
+ctest --preset ninja-debug
+```
+
+`PluginAnalyzer.jucer` is retained temporarily for migration compatibility.
+CMake is the authoritative build definition.
+
+### Using an existing JUCE checkout
+
+To avoid downloading JUCE, configure with an absolute path to a JUCE 8.0.13
+checkout:
+
+```powershell
+cmake --preset vs2026 -DFETCHCONTENT_SOURCE_DIR_JUCE=C:/path/to/JUCE
+```
+
+### Current implementation status
+
+The Linear, Harmonic, Oscilloscope, and Performance paths are being stabilised.
+THD Sweep, IMD, Hammerstein, White Noise, Sine Sweep, and Dynamics should
+currently be treated as experimental and their results should not yet be used
+as calibrated measurements.
 
 ## Usage
 

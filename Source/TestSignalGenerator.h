@@ -18,9 +18,9 @@ public:
     TestSignalGenerator() = default;
 
     /**
-	 * @brief €”õ
-	 * @param sampleRate ƒTƒ“ƒvƒŠƒ“ƒOü”g”
-	 * @param blockSize ƒuƒƒbƒNƒTƒCƒY
+	 * @brief æº–å‚™
+	 * @param sampleRate ã‚µãƒ³ãƒ—ãƒªãƒ³ã‚°å‘¨æ³¢æ•°
+	 * @param blockSize ãƒ–ãƒ­ãƒƒã‚¯ã‚µã‚¤ã‚º
      */
     void prepare(double sampleRate, int blockSize)
     {
@@ -30,10 +30,10 @@ public:
     }
 
     /**
-     * @brief ƒoƒbƒtƒ@‚ğw’è‚³‚ê‚½M†‚Å–‚½‚·
-     * @param buffer ƒI[ƒfƒBƒIƒoƒbƒtƒ@
-     * @param type M†‚Ìí—Ş
-     * @param channel ƒ`ƒƒƒ“ƒlƒ‹ƒCƒ“ƒfƒbƒNƒX
+     * @brief ãƒãƒƒãƒ•ã‚¡ã‚’æŒ‡å®šã•ã‚ŒãŸä¿¡å·ã§æº€ãŸã™
+     * @param buffer ã‚ªãƒ¼ãƒ‡ã‚£ã‚ªãƒãƒƒãƒ•ã‚¡
+     * @param type ä¿¡å·ã®ç¨®é¡
+     * @param channel ãƒãƒ£ãƒ³ãƒãƒ«ã‚¤ãƒ³ãƒ‡ãƒƒã‚¯ã‚¹
 	 */
     void fillBuffer(juce::AudioBuffer<float>& buffer, SignalType type, int channel)
     {
@@ -67,7 +67,7 @@ public:
     }
 
     /**
-	 * @brief ƒWƒFƒlƒŒ[ƒ^[‚Ìó‘Ô‚ğƒŠƒZƒbƒg
+	 * @brief ã‚¸ã‚§ãƒãƒ¬ãƒ¼ã‚¿ãƒ¼ã®çŠ¶æ…‹ã‚’ãƒªã‚»ãƒƒãƒˆ
      */
     void reset()
     {
@@ -117,45 +117,45 @@ private:
     double currentSampleRate = 44100.0;
     int currentBlockSize = 512;
 
-	// ƒCƒ“ƒpƒ‹ƒXó‘Ô
+	// ã‚¤ãƒ³ãƒ‘ãƒ«ã‚¹çŠ¶æ…‹
     bool impulseFired = false;
 
-	// ƒTƒCƒ“”gó‘Ô
+	// ã‚µã‚¤ãƒ³æ³¢çŠ¶æ…‹
     double phase = 0.0;
     double frequency = 1000.0;
     float amplitude = 0.5f;
 
-	// ƒzƒƒCƒgƒmƒCƒYó‘Ô
+	// ãƒ›ãƒ¯ã‚¤ãƒˆãƒã‚¤ã‚ºçŠ¶æ…‹
     juce::Random random;
 
-	// ƒTƒCƒ“ƒXƒC[ƒvó‘Ô
+	// ã‚µã‚¤ãƒ³ã‚¹ã‚¤ãƒ¼ãƒ—çŠ¶æ…‹
     int sweepSampleCount = 0;
     double sweepStartFreq = 20.0;
     double sweepEndFreq = 20000.0;
     double sweepDuration = 5.0;
 
-	// IMDó‘Ô
+	// IMDçŠ¶æ…‹
     double imdPhase1 = 0.0;
     double imdPhase2 = 0.0;
     double imdFreq1 = 250.0;
     double imdFreq2 = 8000.0;
 
-	// ƒ‰ƒ“ƒvó‘Ô
+	// ãƒ©ãƒ³ãƒ—çŠ¶æ…‹
     int rampSampleCount = 0;
     double rampDuration = 2.0;
     float rampStartLevel = -60.0f;  // dB
     float rampEndLevel = 0.0f;      // dB
 
-	// ƒAƒ^ƒbƒNEƒŠƒŠ[ƒXó‘Ô
+	// ã‚¢ã‚¿ãƒƒã‚¯ãƒ»ãƒªãƒªãƒ¼ã‚¹çŠ¶æ…‹
     int attackReleaseSampleCount = 0;
     double attackDuration = 0.1;
     double releaseDuration = 0.5;
     bool isInAttackPhase = true;
 
     /**
-	 * @brief ƒCƒ“ƒpƒ‹ƒXM†‚ğ¶¬
-	 * @param buffer o—Íƒoƒbƒtƒ@
-	 * @param numSamples ƒTƒ“ƒvƒ‹”
+	 * @brief ã‚¤ãƒ³ãƒ‘ãƒ«ã‚¹ä¿¡å·ã‚’ç”Ÿæˆ
+	 * @param buffer å‡ºåŠ›ãƒãƒƒãƒ•ã‚¡
+	 * @param numSamples ã‚µãƒ³ãƒ—ãƒ«æ•°
      */
     void generateImpulse(float* buffer, int numSamples)
     {
@@ -170,9 +170,9 @@ private:
     }
 
     /**
-	 * @brief ƒTƒCƒ“”gM†‚ğ¶¬
-	 * @param buffer o—Íƒoƒbƒtƒ@
-	 * @param numSamples ƒTƒ“ƒvƒ‹”
+	 * @brief ã‚µã‚¤ãƒ³æ³¢ä¿¡å·ã‚’ç”Ÿæˆ
+	 * @param buffer å‡ºåŠ›ãƒãƒƒãƒ•ã‚¡
+	 * @param numSamples ã‚µãƒ³ãƒ—ãƒ«æ•°
      */
     void generateSine(float* buffer, int numSamples)
     {
@@ -188,9 +188,9 @@ private:
     }
 
     /**
-	 * @brief ƒzƒƒCƒgƒmƒCƒYM†‚ğ¶¬
-	 * @param buffer o—Íƒoƒbƒtƒ@
-	 * @param numSamples ƒTƒ“ƒvƒ‹”
+	 * @brief ãƒ›ãƒ¯ã‚¤ãƒˆãƒã‚¤ã‚ºä¿¡å·ã‚’ç”Ÿæˆ
+	 * @param buffer å‡ºåŠ›ãƒãƒƒãƒ•ã‚¡
+	 * @param numSamples ã‚µãƒ³ãƒ—ãƒ«æ•°
      */
     void generateWhiteNoise(float* buffer, int numSamples)
     {
@@ -201,9 +201,9 @@ private:
     }
 
     /**
-	 * @brief ƒTƒCƒ“ƒXƒC[ƒvM†‚ğ¶¬
-	 * @param buffer o—Íƒoƒbƒtƒ@
-	 * @param numSamples ƒTƒ“ƒvƒ‹”
+	 * @brief ã‚µã‚¤ãƒ³ã‚¹ã‚¤ãƒ¼ãƒ—ä¿¡å·ã‚’ç”Ÿæˆ
+	 * @param buffer å‡ºåŠ›ãƒãƒƒãƒ•ã‚¡
+	 * @param numSamples ã‚µãƒ³ãƒ—ãƒ«æ•°
      */
     void generateSineSweep(float* buffer, int numSamples)
     {
@@ -234,9 +234,9 @@ private:
     }
 
     /**
-	 * @brief ƒ‰ƒ“ƒvM†‚ğ¶¬
-	 * @param buffer o—Íƒoƒbƒtƒ@
-	 * @param numSamples ƒTƒ“ƒvƒ‹”
+	 * @brief ãƒ©ãƒ³ãƒ—ä¿¡å·ã‚’ç”Ÿæˆ
+	 * @param buffer å‡ºåŠ›ãƒãƒƒãƒ•ã‚¡
+	 * @param numSamples ã‚µãƒ³ãƒ—ãƒ«æ•°
      */
     void generateRamp(float* buffer, int numSamples)
     {
@@ -252,11 +252,11 @@ private:
                 progress = 0.0;
             }
             
-			// üŒ`‚ÉƒŒƒxƒ‹‚ğ•Ï‰»‚³‚¹‚é
+			// ç·šå½¢ã«ãƒ¬ãƒ™ãƒ«ã‚’å¤‰åŒ–ã•ã›ã‚‹
             float currentDB = rampStartLevel + (rampEndLevel - rampStartLevel) * (float)progress;
             float linearGain = juce::Decibels::decibelsToGain(currentDB);
             
-			// Œ»İ‚Ìü”g”‚ÅƒTƒCƒ“”g‚ğ¶¬
+			// ç¾åœ¨ã®å‘¨æ³¢æ•°ã§ã‚µã‚¤ãƒ³æ³¢ã‚’ç”Ÿæˆ
             buffer[i] = linearGain * (float)std::sin(phase);
             
             double radsPerSample = juce::MathConstants<double>::twoPi * frequency / currentSampleRate;
@@ -270,9 +270,9 @@ private:
     }
 
     /**
-	 * @brief ƒAƒ^ƒbƒNEƒŠƒŠ[ƒXM†‚ğ¶¬
-	 * @param buffer o—Íƒoƒbƒtƒ@
-	 * @param numSamples ƒTƒ“ƒvƒ‹”
+	 * @brief ã‚¢ã‚¿ãƒƒã‚¯ãƒ»ãƒªãƒªãƒ¼ã‚¹ä¿¡å·ã‚’ç”Ÿæˆ
+	 * @param buffer å‡ºåŠ›ãƒãƒƒãƒ•ã‚¡
+	 * @param numSamples ã‚µãƒ³ãƒ—ãƒ«æ•°
      */
     void generateAttackRelease(float* buffer, int numSamples)
     {
@@ -290,7 +290,7 @@ private:
                 
                 if (progress >= 1.0)
                 {
-					// ƒŠƒŠ[ƒXƒtƒF[ƒY‚ÖˆÚs
+					// ãƒªãƒªãƒ¼ã‚¹ãƒ•ã‚§ãƒ¼ã‚ºã¸ç§»è¡Œ
                     isInAttackPhase = false;
                     attackReleaseSampleCount = 0;
                     envelope = 1.0f;
@@ -307,7 +307,7 @@ private:
                 
                 if (progress >= 1.0)
                 {
-					// ƒAƒ^ƒbƒNƒtƒF[ƒY‚ÖˆÚs
+					// ã‚¢ã‚¿ãƒƒã‚¯ãƒ•ã‚§ãƒ¼ã‚ºã¸ç§»è¡Œ
                     isInAttackPhase = true;
                     attackReleaseSampleCount = 0;
                     envelope = 0.0f;
@@ -318,7 +318,7 @@ private:
                 }
             }
             
-			// ƒeƒXƒgü”g”‚ÅƒTƒCƒ“”g‚ğ¶¬
+			// ãƒ†ã‚¹ãƒˆå‘¨æ³¢æ•°ã§ã‚µã‚¤ãƒ³æ³¢ã‚’ç”Ÿæˆ
             buffer[i] = amplitude * envelope * (float)std::sin(phase);
             
             double radsPerSample = juce::MathConstants<double>::twoPi * frequency / currentSampleRate;

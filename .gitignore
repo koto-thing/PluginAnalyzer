@@ -5,6 +5,15 @@
 # JUCEライブラリ本体（もしフォルダ内にコピーしている場合）
 /JUCE
 
+# ローカル専用の設計・改善メモ（Gitでは共有しない）
+/.project-notes/
+
+# CMakeの生成物
+/out/
+/build/
+/cmake-build-*/
+CMakeUserPresets.json
+
 # Visual Studioの一時ファイル
 .vs/
 *.user

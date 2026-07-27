@@ -5,10 +5,10 @@
 
 MainComponent::MainComponent()
 {
-	// ƒ‹ƒbƒNƒAƒ“ƒhƒtƒB[ƒ‹İ’è
+	// ãƒ«ãƒƒã‚¯ã‚¢ãƒ³ãƒ‰ãƒ•ã‚£ãƒ¼ãƒ«è¨­å®š
     setLookAndFeel(&sslLookAndFeel);
     
-	// ƒrƒ…[ƒRƒ“ƒ|[ƒlƒ“ƒgì¬
+	// ãƒ“ãƒ¥ãƒ¼ã‚³ãƒ³ãƒãƒ¼ãƒãƒ³ãƒˆä½œæˆ
     graphComponent = std::make_unique<AnalysisGraphComponent>(engine);
     scopeComponent = std::make_unique<OscilloscopeComponent>(engine);
     engine.addChangeListener(graphComponent.get()); 
@@ -57,7 +57,7 @@ MainComponent::MainComponent()
     browserButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2d2d2d));
     browserButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
     
-    // Œ»İ‚Ìİ’è‚ğ‰Šú‰»
+    // ç¾åœ¨ã®è¨­å®šã‚’åˆæœŸåŒ–
     currentSettings.bufferSize = 512;
     currentSettings.sampleRate = 48000.0;
     currentSettings.fftOrder = 11;
@@ -155,13 +155,13 @@ MainComponent::~MainComponent()
 }
 
 /**
- * @brief ƒI[ƒfƒBƒI€”õ
- * @param samplesPerBlockExpected Šú‘Ò‚³‚ê‚éƒTƒ“ƒvƒ‹ƒuƒƒbƒNƒTƒCƒY
- * @param sampleRate ƒTƒ“ƒvƒ‹ƒŒ[ƒg
+ * @brief ã‚ªãƒ¼ãƒ‡ã‚£ã‚ªæº–å‚™
+ * @param samplesPerBlockExpected æœŸå¾…ã•ã‚Œã‚‹ã‚µãƒ³ãƒ—ãƒ«ãƒ–ãƒ­ãƒƒã‚¯ã‚µã‚¤ã‚º
+ * @param sampleRate ã‚µãƒ³ãƒ—ãƒ«ãƒ¬ãƒ¼ãƒˆ
  */
 void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
 {
-	// Œ»İ‚Ìİ’è‚ÉŠî‚Ã‚¢‚ÄƒGƒ“ƒWƒ“‚ğ€”õ
+	// ç¾åœ¨ã®è¨­å®šã«åŸºã¥ã„ã¦ã‚¨ãƒ³ã‚¸ãƒ³ã‚’æº–å‚™
     int actualBufferSize = (currentSettings.bufferSize > 0) ? currentSettings.bufferSize : samplesPerBlockExpected;
     double actualSampleRate = (currentSettings.sampleRate > 0) ? currentSettings.sampleRate : sampleRate;
     
@@ -169,19 +169,19 @@ void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate
 }
 
 /**
- * @brief Ÿ‚ÌƒI[ƒfƒBƒIƒuƒƒbƒN‚ğæ“¾
- * @param bufferToFill ƒI[ƒfƒBƒIƒoƒbƒtƒ@î•ñ
+ * @brief æ¬¡ã®ã‚ªãƒ¼ãƒ‡ã‚£ã‚ªãƒ–ãƒ­ãƒƒã‚¯ã‚’å–å¾—
+ * @param bufferToFill ã‚ªãƒ¼ãƒ‡ã‚£ã‚ªãƒãƒƒãƒ•ã‚¡æƒ…å ±
  */
 void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
 {
-	// Œ»İ‚Ìƒoƒbƒtƒ@—Ìˆæ‚ğƒNƒŠƒA
+	// ç¾åœ¨ã®ãƒãƒƒãƒ•ã‚¡é ˜åŸŸã‚’ã‚¯ãƒªã‚¢
     bufferToFill.clearActiveBufferRegion();
     
-	// ˆêƒoƒbƒtƒ@‚ğì¬
+	// ä¸€æ™‚ãƒãƒƒãƒ•ã‚¡ã‚’ä½œæˆ
     juce::AudioBuffer<float> tempBuffer(bufferToFill.buffer->getNumChannels(), bufferToFill.numSamples);
     tempBuffer.clear(); // Start silent
     
-	// ƒGƒ“ƒWƒ“‚ÅƒI[ƒfƒBƒIˆ—
+	// ã‚¨ãƒ³ã‚¸ãƒ³ã§ã‚ªãƒ¼ãƒ‡ã‚£ã‚ªå‡¦ç†
     engine.processAudio(tempBuffer);
 }
 
@@ -191,33 +191,33 @@ void MainComponent::releaseResources()
 }
 
 /**
- * @brief ƒRƒ“ƒ|[ƒlƒ“ƒg‚Ì•`‰æ
- * @param g ƒOƒ‰ƒtƒBƒbƒNƒXƒRƒ“ƒeƒLƒXƒg
+ * @brief ã‚³ãƒ³ãƒãƒ¼ãƒãƒ³ãƒˆã®æç”»
+ * @param g ã‚°ãƒ©ãƒ•ã‚£ãƒƒã‚¯ã‚¹ã‚³ãƒ³ãƒ†ã‚­ã‚¹ãƒˆ
  */
 void MainComponent::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds();
     
-    // ƒƒCƒ“‚Ì”wŒi
+    // ãƒ¡ã‚¤ãƒ³ã®èƒŒæ™¯
     g.fillAll(juce::Colour(0xff1a1a1a));
     
-	// ƒwƒbƒ_[‚ÌƒOƒ‰ƒf[ƒVƒ‡ƒ“
+	// ãƒ˜ãƒƒãƒ€ãƒ¼ã®ã‚°ãƒ©ãƒ‡ãƒ¼ã‚·ãƒ§ãƒ³
     auto headerBounds = bounds.removeFromTop(40);
     auto headerGradient = juce::ColourGradient::vertical(
-        juce::Colour(0xff2d2d2d), headerBounds.getY(),
-        juce::Colour(0xff1a1a1a), headerBounds.getBottom()
+        juce::Colour(0xff2d2d2d), static_cast<float>(headerBounds.getY()),
+        juce::Colour(0xff1a1a1a), static_cast<float>(headerBounds.getBottom())
     );
     g.setGradientFill(headerGradient);
     g.fillRect(headerBounds);
     
-    // ƒwƒbƒ_‚ÌƒZƒpƒŒ[ƒ^
+    // ãƒ˜ãƒƒãƒ€ã®ã‚»ãƒ‘ãƒ¬ãƒ¼ã‚¿
     g.setColour(juce::Colour(0xff00a0ff).withAlpha(0.5f));
     g.fillRect(0, 40, getWidth(), 2);
     
-	// ƒZƒNƒVƒ‡ƒ“ƒZƒpƒŒ[ƒ^
+	// ã‚»ã‚¯ã‚·ãƒ§ãƒ³ã‚»ãƒ‘ãƒ¬ãƒ¼ã‚¿
     g.setColour(juce::Colour(0xff404040).withAlpha(0.3f));
-    g.drawLine(0, 70, getWidth(), 70, 1.0f);
-    g.drawLine(0, 150, getWidth(), 150, 1.0f);
+    g.drawLine(0.0f, 70.0f, static_cast<float>(getWidth()), 70.0f, 1.0f);
+    g.drawLine(0.0f, 150.0f, static_cast<float>(getWidth()), 150.0f, 1.0f);
     
     juce::Path cornerPath;
     cornerPath.addTriangle(0, 0, 30, 0, 0, 30);
@@ -229,13 +229,13 @@ void MainComponent::paint(juce::Graphics& g)
 }
 
 /**
- * @brief ƒRƒ“ƒ|[ƒlƒ“ƒg‚ÌƒŠƒTƒCƒYˆ—
+ * @brief ã‚³ãƒ³ãƒãƒ¼ãƒãƒ³ãƒˆã®ãƒªã‚µã‚¤ã‚ºå‡¦ç†
  */
 void MainComponent::resized()
 {
     auto area = getLocalBounds();
     
-    // ƒwƒbƒ_[
+    // ãƒ˜ãƒƒãƒ€ãƒ¼
     auto header = area.removeFromTop(40);
     loadButton.setBounds(header.removeFromLeft(120).reduced(5));
     browserButton.setBounds(header.removeFromLeft(90).reduced(5));
@@ -243,7 +243,7 @@ void MainComponent::resized()
     showPhaseButton.setBounds(header.removeFromLeft(100).reduced(5));
     pluginNameLabel.setBounds(header.removeFromRight(300).reduced(5));
     
-    // ƒ^ƒu
+    // ã‚¿ãƒ–
     auto tabBar = area.removeFromTop(30);
     tabs.setBounds(tabBar);
     
@@ -281,7 +281,7 @@ void MainComponent::resized()
 
 void MainComponent::loadPluginClicked()
 {
-	// ‘Î‰‚·‚éƒvƒ‰ƒOƒCƒ“Œ`®‚Ìƒtƒ@ƒCƒ‹ƒpƒ^[ƒ“‚ğ\’z
+	// å¯¾å¿œã™ã‚‹ãƒ—ãƒ©ã‚°ã‚¤ãƒ³å½¢å¼ã®ãƒ•ã‚¡ã‚¤ãƒ«ãƒ‘ã‚¿ãƒ¼ãƒ³ã‚’æ§‹ç¯‰
     juce::String filePatterns;
     
    #if JUCE_PLUGINHOST_VST3
@@ -304,7 +304,7 @@ void MainComponent::loadPluginClicked()
     #endif
    #endif
     
-    // ƒZƒ~ƒRƒƒ“‚ÅI‚í‚Á‚Ä‚¢‚½‚çíœ
+    // ã‚»ãƒŸã‚³ãƒ­ãƒ³ã§çµ‚ã‚ã£ã¦ã„ãŸã‚‰å‰Šé™¤
     if (filePatterns.endsWithChar(';'))
         filePatterns = filePatterns.dropLastCharacters(1);
     
@@ -327,18 +327,18 @@ void MainComponent::loadPluginClicked()
 }
 
 /**
- * @brief ƒ^ƒCƒ}ƒR[ƒ‹ƒoƒbƒN
+ * @brief ã‚¿ã‚¤ãƒã‚³ãƒ¼ãƒ«ãƒãƒƒã‚¯
  */
 void MainComponent::timerCallback()
 {
-	// THD/IMD•\¦‚ÌXV
+	// THD/IMDè¡¨ç¤ºã®æ›´æ–°
     float thd = engine.getTHD();
     float thdPlusN = engine.getTHDPlusN();
     
     juce::String thdText = juce::String(thd, 3) + "% (THD+N: " + juce::String(thdPlusN, 3) + "%)";
     thdValueLabel.setText(thdText, juce::dontSendNotification);
     
-	// Dynamics•\¦‚ÌXV
+	// Dynamicsè¡¨ç¤ºã®æ›´æ–°
     auto& dynamicsData = engine.getDynamicsData();
     if (dynamicsData.compressionRatio > 0.0f)
     {
@@ -346,7 +346,7 @@ void MainComponent::timerCallback()
         compressionRatioLabel.setText(ratioText, juce::dontSendNotification);
     }
     
-    // Envelope•\¦‚ÌXV
+    // Envelopeè¡¨ç¤ºã®æ›´æ–°
     auto& envelopeData = engine.getEnvelopeData();
     if (envelopeData.attackTime > 0.0f)
     {
@@ -354,22 +354,22 @@ void MainComponent::timerCallback()
         attackTimeLabel.setText(attackText, juce::dontSendNotification);
     }
     
-	// Performance•\¦‚ÌXV
+	// Performanceè¡¨ç¤ºã®æ›´æ–°
     auto& perfData = engine.getPerformanceData();
     
-	// •½‹Ïˆ—ŠÔ
+	// å¹³å‡å‡¦ç†æ™‚é–“
     avgProcessingTimeLabel.setText("Avg: " + juce::String(perfData.averageProcessingTime, 3) + " ms", 
                                    juce::dontSendNotification);
     
-	// ƒs[ƒNˆ—ŠÔ
+	// ãƒ”ãƒ¼ã‚¯å‡¦ç†æ™‚é–“
     peakProcessingTimeLabel.setText("Peak: " + juce::String(perfData.peakProcessingTime, 3) + " ms", 
                                     juce::dontSendNotification);
     
-	// CPUg—p—¦
+	// CPUä½¿ç”¨ç‡
     cpuUsageLabel.setText("CPU: " + juce::String(perfData.cpuUsagePercent, 1) + "%", 
                           juce::dontSendNotification);
     
-	// CPUg—p—¦‚É‰‚¶‚½F•ÏX
+	// CPUä½¿ç”¨ç‡ã«å¿œã˜ãŸè‰²å¤‰æ›´
     if (perfData.cpuUsagePercent < 50.0f)
         cpuUsageLabel.setColour(juce::Label::textColourId, juce::Colours::lightgreen);
     else if (perfData.cpuUsagePercent < 80.0f)
@@ -379,8 +379,8 @@ void MainComponent::timerCallback()
 }
 
 /**
- * @brief ƒ`ƒFƒ“ƒWƒŠƒXƒiƒR[ƒ‹ƒoƒbƒN
- * @param source ƒ`ƒFƒ“ƒWƒuƒ[ƒhƒLƒƒƒXƒ^
+ * @brief ãƒã‚§ãƒ³ã‚¸ãƒªã‚¹ãƒŠã‚³ãƒ¼ãƒ«ãƒãƒƒã‚¯
+ * @param source ãƒã‚§ãƒ³ã‚¸ãƒ–ãƒ­ãƒ¼ãƒ‰ã‚­ãƒ£ã‚¹ã‚¿
  */
 void MainComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
 {
@@ -391,15 +391,15 @@ void MainComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
 }
 
 /**
- * @brief Œ»İ‚Ìƒ^ƒu‚ª•ÏX‚³‚ê‚½‚Æ‚«‚Ìˆ—
- * @param newCurrentTabIndex V‚µ‚¢ƒ^ƒu‚ÌƒCƒ“ƒfƒbƒNƒX
- * @param newCurrentTabName V‚µ‚¢ƒ^ƒu‚Ì–¼‘O
+ * @brief ç¾åœ¨ã®ã‚¿ãƒ–ãŒå¤‰æ›´ã•ã‚ŒãŸã¨ãã®å‡¦ç†
+ * @param newCurrentTabIndex æ–°ã—ã„ã‚¿ãƒ–ã®ã‚¤ãƒ³ãƒ‡ãƒƒã‚¯ã‚¹
+ * @param newCurrentTabName æ–°ã—ã„ã‚¿ãƒ–ã®åå‰
  */
 void MainComponent::currentTabChanged(int newCurrentTabIndex, const juce::String& /*newCurrentTabName*/)
 {
     juce::Component* newContent = nullptr;
     
-    // ƒfƒtƒH
+    // ãƒ‡ãƒ•ã‚©
     newContent = graphComponent.get(); 
     
     switch (newCurrentTabIndex)
@@ -446,7 +446,7 @@ void MainComponent::currentTabChanged(int newCurrentTabIndex, const juce::String
 }
 
 /**
- * @brief İ’èƒ_ƒCƒAƒƒO‚ğ•\¦
+ * @brief è¨­å®šãƒ€ã‚¤ã‚¢ãƒ­ã‚°ã‚’è¡¨ç¤º
  */
 void MainComponent::showSettingsDialog()
 {
@@ -469,24 +469,24 @@ void MainComponent::showSettingsDialog()
 }
 
 /**
- * @brief V‚µ‚¢İ’è‚ğ“K—p
- * @param newSettings V‚µ‚¢İ’è
+ * @brief æ–°ã—ã„è¨­å®šã‚’é©ç”¨
+ * @param newSettings æ–°ã—ã„è¨­å®š
  */
 void MainComponent::applySettings(const SettingsComponent::Settings& newSettings)
 {
-	// ƒI[ƒfƒBƒI‚ğƒVƒƒƒbƒgƒ_ƒEƒ“
+	// ã‚ªãƒ¼ãƒ‡ã‚£ã‚ªã‚’ã‚·ãƒ£ãƒƒãƒˆãƒ€ã‚¦ãƒ³
     shutdownAudio();
     
-	// V‚µ‚¢İ’è‚ğ•Û‘¶
+	// æ–°ã—ã„è¨­å®šã‚’ä¿å­˜
     currentSettings = newSettings;
     
-	// ƒGƒ“ƒWƒ“‚ÉV‚µ‚¢İ’è‚ğ“K—p
+	// ã‚¨ãƒ³ã‚¸ãƒ³ã«æ–°ã—ã„è¨­å®šã‚’é©ç”¨
     engine.setFFTOrder(newSettings.fftOrder);
     
-	// ƒI[ƒfƒBƒIƒ`ƒƒƒlƒ‹‚ğÄİ’è
+	// ã‚ªãƒ¼ãƒ‡ã‚£ã‚ªãƒãƒ£ãƒãƒ«ã‚’å†è¨­å®š
     setAudioChannels(newSettings.numInputChannels, newSettings.numOutputChannels, nullptr);
     
-	// V‚µ‚¢ƒTƒ“ƒvƒ‹ƒŒ[ƒg‚Æƒoƒbƒtƒ@ƒTƒCƒY‚ÅƒGƒ“ƒWƒ“‚ğ€”õ
+	// æ–°ã—ã„ã‚µãƒ³ãƒ—ãƒ«ãƒ¬ãƒ¼ãƒˆã¨ãƒãƒƒãƒ•ã‚¡ã‚µã‚¤ã‚ºã§ã‚¨ãƒ³ã‚¸ãƒ³ã‚’æº–å‚™
     engine.prepare(newSettings.sampleRate, newSettings.bufferSize);
     
     DBG("Settings applied: BufferSize=" << newSettings.bufferSize 
@@ -495,20 +495,20 @@ void MainComponent::applySettings(const SettingsComponent::Settings& newSettings
 }
 
 /**
- * @brief ƒvƒ‰ƒOƒCƒ“ƒuƒ‰ƒEƒU‚ğ•\¦
+ * @brief ãƒ—ãƒ©ã‚°ã‚¤ãƒ³ãƒ–ãƒ©ã‚¦ã‚¶ã‚’è¡¨ç¤º
  */
 void MainComponent::showPluginBrowser()
 {
     auto* browserComp = new PluginScannerComponent(currentSettings.pluginScanPaths);
     browserComp->onPluginSelected = [this](const juce::PluginDescription& desc) {
-		// ƒvƒ‰ƒOƒCƒ“‚ğƒ[ƒh
+		// ãƒ—ãƒ©ã‚°ã‚¤ãƒ³ã‚’ãƒ­ãƒ¼ãƒ‰
         juce::File pluginFile(desc.fileOrIdentifier);
         
         if (pluginFile.existsAsFile() && engine.loadPlugin(pluginFile))
         {
             pluginNameLabel.setText(engine.getPluginName(), juce::dontSendNotification);
             
-			// ƒ_ƒCƒAƒƒO‚ğ•Â‚¶‚é
+			// ãƒ€ã‚¤ã‚¢ãƒ­ã‚°ã‚’é–‰ã˜ã‚‹
             if (auto* dialog = juce::TopLevelWindow::getActiveTopLevelWindow())
             {
                 if (auto* dialogWindow = dynamic_cast<juce::DialogWindow*>(dialog))

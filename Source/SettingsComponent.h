@@ -293,9 +293,9 @@ private:
         fileChooser = std::make_unique<juce::FileChooser>("Select Plugin Folder",
             juce::File::getSpecialLocation(juce::File::userHomeDirectory));
         
-        auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories;
+        auto chooserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories;
         
-        fileChooser->launchAsync(flags, [this](const juce::FileChooser& fc) {
+        fileChooser->launchAsync(chooserFlags, [this](const juce::FileChooser& fc) {
             auto folder = fc.getResult();
             if (folder.exists() && folder.isDirectory())
             {

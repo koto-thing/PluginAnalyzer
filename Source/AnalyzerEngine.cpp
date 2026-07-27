@@ -4,22 +4,22 @@ AnalyzerEngine::AnalyzerEngine()
 {
     // Register all available plugin formats
 #if JUCE_PLUGINHOST_VST3
-    formatManager.addFormat(new juce::VST3PluginFormat());
+    formatManager.addFormat(std::make_unique<juce::VST3PluginFormat>());
 #endif
 
 #if JUCE_MAC
  #if JUCE_PLUGINHOST_AU
-    formatManager.addFormat(new juce::AudioUnitPluginFormat());
+    formatManager.addFormat(std::make_unique<juce::AudioUnitPluginFormat>());
  #endif
 #endif
 
 #if JUCE_LINUX
  #if JUCE_PLUGINHOST_LADSPA
-    formatManager.addFormat(new juce::LADSPAPluginFormat());
+    formatManager.addFormat(std::make_unique<juce::LADSPAPluginFormat>());
  #endif
 
  #if JUCE_PLUGINHOST_LV2
-    formatManager.addFormat(new juce::LV2PluginFormat());
+    formatManager.addFormat(std::make_unique<juce::LV2PluginFormat>());
  #endif
 #endif
     

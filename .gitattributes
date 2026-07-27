@@ -3,6 +3,17 @@
 ###############################################################################
 * text=auto
 
+# ソースとビルド定義の文字コード・改行を統一
+*.cpp text eol=lf
+*.h text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+*.json text eol=lf
+.gitattributes text eol=lf
+.gitignore text eol=lf
+
 ###############################################################################
 # Set default behavior for command prompt diff.
 #

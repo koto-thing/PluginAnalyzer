@@ -11,7 +11,7 @@ public:
     bool moreThanOneInstanceAllowed() override             { return true; }
 
     /**
-	 * @brief ƒAƒvƒŠƒP[ƒVƒ‡ƒ“‰Šú‰»
+	 * @brief ã‚¢ãƒ—ãƒªã‚±ãƒ¼ã‚·ãƒ§ãƒ³åˆæœŸåŒ–
      */
     void initialise(const juce::String& /*commandLine*/) override
     {
@@ -19,7 +19,7 @@ public:
     }
 
 	/**
-	 * @brief ƒAƒvƒŠƒP[ƒVƒ‡ƒ“I—¹
+	 * @brief ã‚¢ãƒ—ãƒªã‚±ãƒ¼ã‚·ãƒ§ãƒ³çµ‚äº†
      */
     void shutdown() override
     {
@@ -27,7 +27,7 @@ public:
     }
 
     /**
-	 * @brief ƒVƒXƒeƒ€‚©‚çƒAƒvƒŠƒP[ƒVƒ‡ƒ“I—¹‚ª—v‹‚³‚ê‚½‚Æ‚«
+	 * @brief ã‚·ã‚¹ãƒ†ãƒ ã‹ã‚‰ã‚¢ãƒ—ãƒªã‚±ãƒ¼ã‚·ãƒ§ãƒ³çµ‚äº†ãŒè¦æ±‚ã•ã‚ŒãŸã¨ã
      */
     void systemRequestedQuit() override
     {
@@ -35,14 +35,14 @@ public:
     }
 
     /**
-	 * @brief •Ê‚ÌƒCƒ“ƒXƒ^ƒ“ƒX‚ª‹N“®‚³‚ê‚½‚Æ‚«
+	 * @brief åˆ¥ã®ã‚¤ãƒ³ã‚¹ã‚¿ãƒ³ã‚¹ãŒèµ·å‹•ã•ã‚ŒãŸã¨ã
      */
     void anotherInstanceStarted(const juce::String& /*commandLine*/) override
     {
     }
 
     /**
-	 * @brief ƒƒCƒ“ƒEƒBƒ“ƒhƒEƒNƒ‰ƒX
+	 * @brief ãƒ¡ã‚¤ãƒ³ã‚¦ã‚£ãƒ³ãƒ‰ã‚¦ã‚¯ãƒ©ã‚¹
      */
     class MainWindow : public juce::DocumentWindow
     {
@@ -55,7 +55,7 @@ public:
         {
             setUsingNativeTitleBar(true);
             
-			// ƒƒCƒ“ƒRƒ“ƒ|[ƒlƒ“ƒg‚ğƒZƒbƒg
+			// ãƒ¡ã‚¤ãƒ³ã‚³ãƒ³ãƒãƒ¼ãƒãƒ³ãƒˆã‚’ã‚»ãƒƒãƒˆ
             setContentOwned(new MainComponent(), true);
 
             #if JUCE_IOS || JUCE_ANDROID
@@ -69,7 +69,7 @@ public:
         }
 
         /**
-		 * @brief •Â‚¶‚éƒ{ƒ^ƒ“‚ª‰Ÿ‚³‚ê‚½‚Æ‚«‚Ìˆ—
+		 * @brief é–‰ã˜ã‚‹ãƒœã‚¿ãƒ³ãŒæŠ¼ã•ã‚ŒãŸã¨ãã®å‡¦ç†
          */
         void closeButtonPressed() override
         {
@@ -84,5 +84,5 @@ private:
     std::unique_ptr<MainWindow> mainWindow;
 };
 
-// ƒGƒ“ƒgƒŠ[ƒ|ƒCƒ“ƒg
+// ã‚¨ãƒ³ãƒˆãƒªãƒ¼ãƒã‚¤ãƒ³ãƒˆ
 START_JUCE_APPLICATION(PluginAnalyzerApplication)

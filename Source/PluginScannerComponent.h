@@ -57,9 +57,11 @@ public:
             g.fillAll(juce::Colour(0xff00a0ff).withAlpha(0.3f));
             
         g.setColour(juce::Colours::white);
-        if (auto* type = knownPluginList.getType(rowNumber))
+        const auto types = knownPluginList.getTypes();
+        if (juce::isPositiveAndBelow(rowNumber, types.size()))
         {
-             g.drawText(type->name + " (" + type->pluginFormatName + ")", 5, 0, width, height, juce::Justification::centredLeft);
+             const auto& type = types.getReference(rowNumber);
+             g.drawText(type.name + " (" + type.pluginFormatName + ")", 5, 0, width, height, juce::Justification::centredLeft);
         }
     }
     
@@ -67,8 +69,9 @@ public:
     {
         if (onPluginSelected)
         {
-            if (auto* type = knownPluginList.getType(row))
-                onPluginSelected(*type);
+            const auto types = knownPluginList.getTypes();
+            if (juce::isPositiveAndBelow(row, types.size()))
+                onPluginSelected(types.getReference(row));
         }
     }
     
@@ -90,10 +93,9 @@ private:
             if (dir.isDirectory())
             {
                 // 再帰的に
-                juce::DirectoryIterator iter(dir, true, "*", juce::File::findFiles);
-                while (iter.next())
+                for (const auto& entry : juce::RangedDirectoryIterator(dir, true, "*", juce::File::findFiles))
                 {
-                    auto file = iter.getFile();
+                    auto file = entry.getFile();
                     for (auto format : formatManager.getFormats())
                     {
                         juce::OwnedArray<juce::PluginDescription> found;
