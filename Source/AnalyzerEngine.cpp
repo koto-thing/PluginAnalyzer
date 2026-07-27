@@ -990,7 +990,7 @@ void AnalyzerEngine::analyzeDynamicsSample(float input, float output)
             return std::pair<double, double>(slope, intercept);
         };
 
-        const auto segment = juce::jmax<size_t>(4, count / 3);
+        const auto segment = std::max<size_t>(static_cast<size_t>(4), count / 3);
         const auto low = fit(0, segment);
         const auto high = fit(count - segment, count);
         if (high.first > 0.01 && high.first < 1.25)
