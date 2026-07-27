@@ -31,7 +31,8 @@ private:
 
     void drawGrid(juce::Graphics& g);
     void drawResponse(juce::Graphics& g);
-    void drawCurve(juce::Graphics& g, const std::vector<float>& data, juce::Colour colour, float minVal, float maxVal);
+    void drawCurve(juce::Graphics& g, const std::vector<float>& data, juce::Colour colour,
+                   float minVal, float maxVal, double sampleRate);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnalysisGraphComponent)
 };

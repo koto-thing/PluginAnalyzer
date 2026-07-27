@@ -70,10 +70,9 @@ public:
             int samplesToKeep = (int)plotBuffer.size() - numToRead;
             if (samplesToKeep > 0)
             {
-                std::vector<float> newBuffer(plotBuffer.size());
-                std::copy(plotBuffer.begin() + numToRead, plotBuffer.end(), newBuffer.begin());
-                std::copy(tempBuffer.begin(), tempBuffer.begin() + numToRead, newBuffer.begin() + samplesToKeep);
-                plotBuffer = newBuffer;
+                std::move(plotBuffer.begin() + numToRead, plotBuffer.end(), plotBuffer.begin());
+                std::copy(tempBuffer.begin(), tempBuffer.begin() + numToRead,
+                          plotBuffer.begin() + samplesToKeep);
             }
             else
             {

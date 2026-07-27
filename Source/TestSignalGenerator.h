@@ -11,6 +11,7 @@ public:
         SineSweep,
         WhiteNoise,
         Sine,
+        IMDDualTone,
         Ramp,
         AttackRelease
     };
@@ -47,6 +48,9 @@ public:
             break;
         case SignalType::Sine:
             generateSine(writePointer, numSamples);
+            break;
+        case SignalType::IMDDualTone:
+            generateIMDDualTone(writePointer, numSamples);
             break;
         case SignalType::WhiteNoise:
             generateWhiteNoise(writePointer, numSamples);
@@ -91,6 +95,11 @@ public:
     {
         imdFreq1 = juce::jlimit(20.0, 20000.0, freq1);
         imdFreq2 = juce::jlimit(20.0, 20000.0, freq2);
+    }
+
+    void setIMDAmplitudeRatio(double lowToHighRatio)
+    {
+        imdAmplitudeRatio = juce::jmax(0.01, lowToHighRatio);
     }
 
     void setSweepParameters(double startFreq, double endFreq, double duration)
@@ -139,6 +148,7 @@ private:
     double imdPhase2 = 0.0;
     double imdFreq1 = 250.0;
     double imdFreq2 = 8000.0;
+    double imdAmplitudeRatio = 1.0;
 
 	// ランプ状態
     int rampSampleCount = 0;
@@ -197,6 +207,27 @@ private:
         for (int i = 0; i < numSamples; ++i)
         {
             buffer[i] = amplitude * (random.nextFloat() * 2.0f - 1.0f);
+        }
+    }
+
+    void generateIMDDualTone(float* buffer, int numSamples)
+    {
+        const auto normalisation = 1.0 / (imdAmplitudeRatio + 1.0);
+        const auto lowAmplitude = amplitude * imdAmplitudeRatio * normalisation;
+        const auto highAmplitude = amplitude * normalisation;
+        const auto lowDelta = juce::MathConstants<double>::twoPi * imdFreq1 / currentSampleRate;
+        const auto highDelta = juce::MathConstants<double>::twoPi * imdFreq2 / currentSampleRate;
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            buffer[i] = static_cast<float>(lowAmplitude * std::sin(imdPhase1)
+                                           + highAmplitude * std::sin(imdPhase2));
+            imdPhase1 += lowDelta;
+            imdPhase2 += highDelta;
+            if (imdPhase1 >= juce::MathConstants<double>::twoPi)
+                imdPhase1 -= juce::MathConstants<double>::twoPi;
+            if (imdPhase2 >= juce::MathConstants<double>::twoPi)
+                imdPhase2 -= juce::MathConstants<double>::twoPi;
         }
     }
 

@@ -290,7 +290,7 @@ void MainComponent::resized()
     // Performance
     performanceLabel.setBounds(row3.removeFromLeft(100).reduced(5));
     avgProcessingTimeLabel.setBounds(row3.removeFromLeft(120).reduced(5));
-    peakProcessingTimeLabel.setBounds(row3.removeFromLeft(120).reduced(5));
+    peakProcessingTimeLabel.setBounds(row3.removeFromLeft(260).reduced(5));
     cpuUsageLabel.setBounds(row3.removeFromLeft(100).reduced(5));
     
     // Content
@@ -369,10 +369,12 @@ void MainComponent::timerCallback()
 {
     const auto snapshot = engine.getAnalysisSnapshot();
 	// THD/IMD表示の更新
-    float thd = snapshot->thd;
-    float thdPlusN = snapshot->thdPlusN;
-    
-    juce::String thdText = juce::String(thd, 3) + "% (THD+N: " + juce::String(thdPlusN, 3) + "%)";
+    juce::String thdText;
+    if (engine.getAnalysisMode() == AnalyzerEngine::AnalysisMode::IMD)
+        thdText = "IMD: " + juce::String(snapshot->imd, 3) + "%";
+    else
+        thdText = juce::String(snapshot->thd, 3) + "% (THD+N: "
+                + juce::String(snapshot->thdPlusN, 3) + "%)";
     thdValueLabel.setText(thdText, juce::dontSendNotification);
     
 	// Dynamics表示の更新
@@ -399,7 +401,10 @@ void MainComponent::timerCallback()
                                    juce::dontSendNotification);
     
 	// ピーク処理時間
-    peakProcessingTimeLabel.setText("Peak: " + juce::String(perfData.peakProcessingTime, 3) + " ms", 
+    peakProcessingTimeLabel.setText(
+        "Peak: " + juce::String(perfData.peakProcessingTime, 3)
+        + " ms  p95/p99: " + juce::String(perfData.p95ProcessingTime, 3)
+        + "/" + juce::String(perfData.p99ProcessingTime, 3) + " ms",
                                     juce::dontSendNotification);
     
 	// CPU使用率

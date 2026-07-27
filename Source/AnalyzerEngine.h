@@ -43,9 +43,14 @@ public:
     {
         float averageProcessingTime = 0.0f;
         float peakProcessingTime = 0.0f;
+        float p95ProcessingTime = 0.0f;
+        float p99ProcessingTime = 0.0f;
         float cpuUsagePercent = 0.0f;
         int bufferSize = 0;
         double sampleRate = 0.0;
+        uint64_t droppedAnalysisSamples = 0;
+        uint64_t droppedScopeSamples = 0;
+        uint64_t droppedPerformanceRecords = 0;
         std::vector<float> processingTimeHistory;
     };
 
@@ -58,12 +63,15 @@ public:
         std::vector<float> phaseSpectrumL;
         std::vector<float> phaseSpectrumR;
         std::vector<float> harmonicLevels;
+        std::vector<float> thdSweepFrequencies;
+        std::vector<float> thdSweepValues;
         DynamicsData dynamics;
         EnvelopeData envelope;
         PerformanceData performance;
         float thd = 0.0f;
         float thdPlusN = 0.0f;
         float imd = 0.0f;
+        int latencySamples = 0;
         double sampleRate = 44100.0;
     };
 
@@ -112,6 +120,7 @@ private:
         float outputR = 0.0f;
         AnalysisMode mode = AnalysisMode::Linear;
         uint32_t generation = 0;
+        float measurementFrequency = 1000.0f;
     };
 
     struct PerformanceRecord
@@ -136,6 +145,7 @@ private:
     void calculateIMD(AnalysisSnapshot& result);
     void analyzeDynamicsSample(float input, float output);
     void analyzeEnvelopeSample(float output);
+    void updateTHDSweep(float frequency, float thd);
     void updatePerformanceMetrics(const PerformanceRecord& record);
     void resizeAudioBuffers(int blockSize);
 
@@ -147,6 +157,7 @@ private:
     bool pluginIsPrepared = false;
     int pluginInputChannels = 0;
     int pluginOutputChannels = 0;
+    std::atomic<int> pluginLatencySamples { 0 };
 
     TestSignalGenerator signalGenerator;
     std::atomic<AnalysisMode> requestedMode { AnalysisMode::Linear };
@@ -171,17 +182,33 @@ private:
     std::unique_ptr<juce::dsp::FFT> forwardFFT;
     std::unique_ptr<juce::dsp::WindowingFunction<float>> window;
     std::vector<float> complexDataL, complexDataR;
-    std::vector<float> accumulationBufferL, accumulationBufferR;
+    std::vector<float> complexInput;
+    std::vector<float> accumulationBufferInput, accumulationBufferL, accumulationBufferR;
+    std::vector<double> averagedInputPower, averagedOutputPowerL, averagedOutputPowerR;
+    int spectralAverageCount = 0;
     int accumulationIndex = 0;
+    float completedFrameFrequency = 1000.0f;
     uint32_t workerGeneration = 0;
     int dynamicsDecimationCounter = 0;
     int envelopeDecimationCounter = 0;
+    double dynamicsInputSquared = 0.0;
+    double dynamicsOutputSquared = 0.0;
+    int dynamicsWindowSamples = 0;
+    double envelopeTimeSeconds = 0.0;
+    float envelopePrevious = 0.0f;
+
+    int thdSweepSamplesAtFrequency = 0;
+    int thdSweepBin = 0;
+    static constexpr int thdSweepSteps = 30;
 
     AnalysisSnapshot workerResult;
     std::shared_ptr<const AnalysisSnapshot> publishedSnapshot;
     std::array<float, performanceHistorySize> performanceHistory {};
     int performanceHistoryWrite = 0;
     int performanceHistoryCount = 0;
+    std::atomic<uint64_t> droppedAnalysisSamples { 0 };
+    std::atomic<uint64_t> droppedScopeSamples { 0 };
+    std::atomic<uint64_t> droppedPerformanceRecords { 0 };
 
     std::atomic<double> activeSampleRate { 44100.0 };
     std::atomic<int> activeBlockSize { 512 };

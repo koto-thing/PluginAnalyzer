@@ -80,13 +80,16 @@ The build system and core audio/plugin lifecycle have been stabilised. Hosted
 mono and stereo effects are prepared with the active device sample rate and
 block size, and their processed signal is returned to the audio device.
 Analysis samples now cross a fixed-capacity FIFO into a dedicated worker thread;
-FFT, THD, dynamics, and performance aggregation do not run in the audio
+FFT, distortion, dynamics, and performance aggregation do not run in the audio
 callback. The UI reads immutable result snapshots and live parameters cross the
-audio boundary atomically. The Linear, Harmonic, Oscilloscope, and Performance
-measurement paths are still being calibrated.
-THD Sweep, IMD, Hammerstein, White Noise, Sine Sweep, and Dynamics should
-currently be treated as experimental and their results should not yet be used
-as calibrated measurements.
+audio boundary atomically. Linear analysis reports the input/output transfer
+function with plugin latency removed from phase. Harmonic analysis uses
+FFT-bin-aligned tones, Hann-window amplitude correction, a 20 Hz–20 kHz
+measurement band, and guarded THD/THD+N calculations. Performance results
+include average, peak, p95, and p99 processing time as well as FIFO drop counts.
+THD Sweep, IMD, Hammerstein, White Noise, Sine Sweep, and Dynamics have bounded
+measurement implementations but remain experimental until the Phase 6
+reference-processor calibration suite is complete.
 
 ## Usage
 

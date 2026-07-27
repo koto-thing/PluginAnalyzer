@@ -56,20 +56,20 @@ void AnalysisGraphComponent::paint(juce::Graphics& g) {
     if (showPhase) {
         const auto& spectrumR = snapshot->phaseSpectrumR;
         if (!spectrumR.empty())
-            drawCurve(g, spectrumR, juce::Colour(0xffff6b35), -juce::MathConstants<float>::pi, juce::MathConstants<float>::pi);
+            drawCurve(g, spectrumR, juce::Colour(0xffff6b35), -juce::MathConstants<float>::pi, juce::MathConstants<float>::pi, snapshot->sampleRate);
 
         const auto& spectrumL = snapshot->phaseSpectrumL;
         if (!spectrumL.empty())
-            drawCurve(g, spectrumL, curveColour, -juce::MathConstants<float>::pi, juce::MathConstants<float>::pi);
+            drawCurve(g, spectrumL, curveColour, -juce::MathConstants<float>::pi, juce::MathConstants<float>::pi, snapshot->sampleRate);
     }
     else {
         const auto& spectrumR = snapshot->magnitudeSpectrumR;
         if (!spectrumR.empty())
-            drawCurve(g, spectrumR, juce::Colour(0xffff6b35), -100.0f, 20.0f);
+            drawCurve(g, spectrumR, juce::Colour(0xffff6b35), -100.0f, 20.0f, snapshot->sampleRate);
 
         const auto& spectrumL = snapshot->magnitudeSpectrumL;
         if (!spectrumL.empty())
-            drawCurve(g, spectrumL, curveColour, -100.0f, 20.0f);
+            drawCurve(g, spectrumL, curveColour, -100.0f, 20.0f, snapshot->sampleRate);
     }
     
 	// プラグイン未ロード時のメッセージ表示
@@ -165,7 +165,9 @@ void AnalysisGraphComponent::drawGrid(juce::Graphics& g) {
  * @param minVal Y軸最小値
  * @param maxVal Y軸最大値
  */
-void AnalysisGraphComponent::drawCurve(juce::Graphics& g, const std::vector<float>& data, juce::Colour colour, float minVal, float maxVal) {
+void AnalysisGraphComponent::drawCurve(juce::Graphics& g, const std::vector<float>& data,
+                                       juce::Colour colour, float minVal, float maxVal,
+                                       double sampleRate) {
     if (data.empty())
         return;
 
@@ -192,7 +194,7 @@ void AnalysisGraphComponent::drawCurve(juce::Graphics& g, const std::vector<floa
     juce::Path p;
     auto w = (float)getWidth();
     auto h = (float)getHeight();
-    float nyquist = 22050.0f;
+    float nyquist = static_cast<float>(sampleRate * 0.5);
     int numBins = (int)smoothed.size();
     bool started = false;
 
