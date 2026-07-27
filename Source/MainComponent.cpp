@@ -367,15 +367,16 @@ void MainComponent::showPluginLoadError()
  */
 void MainComponent::timerCallback()
 {
+    const auto snapshot = engine.getAnalysisSnapshot();
 	// THD/IMD表示の更新
-    float thd = engine.getTHD();
-    float thdPlusN = engine.getTHDPlusN();
+    float thd = snapshot->thd;
+    float thdPlusN = snapshot->thdPlusN;
     
     juce::String thdText = juce::String(thd, 3) + "% (THD+N: " + juce::String(thdPlusN, 3) + "%)";
     thdValueLabel.setText(thdText, juce::dontSendNotification);
     
 	// Dynamics表示の更新
-    auto& dynamicsData = engine.getDynamicsData();
+    const auto& dynamicsData = snapshot->dynamics;
     if (dynamicsData.compressionRatio > 0.0f)
     {
         juce::String ratioText = "Ratio: " + juce::String(dynamicsData.compressionRatio, 2) + ":1";
@@ -383,7 +384,7 @@ void MainComponent::timerCallback()
     }
     
     // Envelope表示の更新
-    auto& envelopeData = engine.getEnvelopeData();
+    const auto& envelopeData = snapshot->envelope;
     if (envelopeData.attackTime > 0.0f)
     {
         juce::String attackText = "Attack: " + juce::String(envelopeData.attackTime * 1000.0f, 1) + "ms";
@@ -391,7 +392,7 @@ void MainComponent::timerCallback()
     }
     
 	// Performance表示の更新
-    auto& perfData = engine.getPerformanceData();
+    const auto& perfData = snapshot->performance;
     
 	// 平均処理時間
     avgProcessingTimeLabel.setText("Avg: " + juce::String(perfData.averageProcessingTime, 3) + " ms", 

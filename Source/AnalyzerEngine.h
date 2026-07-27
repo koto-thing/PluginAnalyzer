@@ -2,58 +2,27 @@
 
 #include <JuceHeader.h>
 #include "TestSignalGenerator.h"
+#include <array>
+#include <atomic>
+#include <memory>
 
-class AnalyzerEngine : public juce::ChangeBroadcaster
+class AnalyzerEngine : public juce::ChangeBroadcaster,
+                       private juce::Thread
 {
 public:
-    AnalyzerEngine();
-    ~AnalyzerEngine();
-
-    // Setup
-    void prepare(double sampleRate, int blockSize);
-    void releaseResources();
-    void setBlockSize(int newBlockSize);
-    
-    // Configuration
-    void setFFTOrder(int newFftOrder);
-    int getFFTOrder() const { return fftOrder; }
-    int getFFTSize() const { return fftSize; }
-    
-    // Plugin Management
-    bool loadPlugin(const juce::File& file);
-    void unloadPlugin();
-    juce::String getPluginName() const;
-    juce::String getLastPluginError() const;
-
     enum class AnalysisMode
     {
-		Linear,         // インパルス応答
-		Harmonic,       // harmonic分析
-		Hammerstein,    // Hammerstein-Wienerモデル
-		WhiteNoise,     // ホワイトノイズ
-        SineSweep,      // Sinスイープ
-		THDSweep,       // THDスイープ
-		IMD,            // IMD分析
-		Dynamics,       // ダイナミクス分析
-		Performance     // パフォーマンス分析
+        Linear,
+        Harmonic,
+        Hammerstein,
+        WhiteNoise,
+        SineSweep,
+        THDSweep,
+        IMD,
+        Dynamics,
+        Performance
     };
 
-    void setAnalysisMode(AnalysisMode mode);
-    AnalysisMode getAnalysisMode() const { return currentMode; }
-
-    // THD
-    void setInputAmplitude(float amplitude);
-    float getInputAmplitude() const;
-    void setTestFrequency(double frequency);
-    double getTestFrequency() const;
-    
-    float getTHD() const { return currentTHD; }
-    float getTHDPlusN() const { return currentTHDPlusN; }
-    float getIMD() const { return currentIMD; }
-    
-    const std::vector<float>& getHarmonicLevels() const { return harmonicLevels; }
-
-    // Dynamics
     struct DynamicsData
     {
         std::vector<float> inputLevels;
@@ -61,9 +30,7 @@ public:
         float compressionRatio = 1.0f;
         float threshold = 0.0f;
     };
-    
-    const DynamicsData& getDynamicsData() const { return dynamicsData; }
-    
+
     struct EnvelopeData
     {
         std::vector<float> timePoints;
@@ -71,10 +38,7 @@ public:
         float attackTime = 0.0f;
         float releaseTime = 0.0f;
     };
-    
-    const EnvelopeData& getEnvelopeData() const { return envelopeData; }
 
-    // Performance
     struct PerformanceData
     {
         float averageProcessingTime = 0.0f;
@@ -84,94 +48,143 @@ public:
         double sampleRate = 0.0;
         std::vector<float> processingTimeHistory;
     };
-    
-    const PerformanceData& getPerformanceData() const { return performanceData; }
 
-    // Analysis
+    // An instance is never mutated after publication. UI code keeps this shared
+    // pointer for the complete paint/timer operation.
+    struct AnalysisSnapshot
+    {
+        std::vector<float> magnitudeSpectrumL;
+        std::vector<float> magnitudeSpectrumR;
+        std::vector<float> phaseSpectrumL;
+        std::vector<float> phaseSpectrumR;
+        std::vector<float> harmonicLevels;
+        DynamicsData dynamics;
+        EnvelopeData envelope;
+        PerformanceData performance;
+        float thd = 0.0f;
+        float thdPlusN = 0.0f;
+        float imd = 0.0f;
+        double sampleRate = 44100.0;
+    };
+
+    AnalyzerEngine();
+    ~AnalyzerEngine() override;
+
+    void prepare(double sampleRate, int blockSize);
+    void releaseResources();
+    void setBlockSize(int newBlockSize);
+
+    void setFFTOrder(int newFftOrder);
+    int getFFTOrder() const { return requestedFFTOrder.load(std::memory_order_relaxed); }
+    int getFFTSize() const { return 1 << getFFTOrder(); }
+
+    bool loadPlugin(const juce::File& file);
+    void unloadPlugin();
+    juce::String getPluginName() const;
+    juce::String getLastPluginError() const;
+
+    void setAnalysisMode(AnalysisMode mode);
+    AnalysisMode getAnalysisMode() const
+    {
+        return requestedMode.load(std::memory_order_relaxed);
+    }
+
+    void setInputAmplitude(float amplitude);
+    float getInputAmplitude() const { return requestedAmplitude.load(std::memory_order_relaxed); }
+    void setTestFrequency(double frequency);
+    double getTestFrequency() const { return requestedFrequency.load(std::memory_order_relaxed); }
+
+    std::shared_ptr<const AnalysisSnapshot> getAnalysisSnapshot() const;
+
     void processAudio(juce::AudioBuffer<float>& buffer);
     void triggerImpulseAnalysis();
-    
-    // データアクセス用
-    const std::vector<float>& getMagnitudeSpectrumL() const { return magnitudeSpectrumL; }
-    const std::vector<float>& getMagnitudeSpectrumR() const { return magnitudeSpectrumR; }
-    const std::vector<float>& getPhaseSpectrumL() const { return phaseSpectrumL; }
-    const std::vector<float>& getPhaseSpectrumR() const { return phaseSpectrumR; }
-    
-    const std::vector<float>& getMagnitudeSpectrum() const { return magnitudeSpectrumL; }
 
-    // Oscilloscope
     void addToScopeFifo(const float* data, int numSamples);
     int readFromScopeFifo(float* dest, int numSamples);
-    
-    enum
-    {
-        scopeFifoSize = 32768
-    };
-    juce::AbstractFifo scopeFifo { scopeFifoSize };
-    std::vector<float> scopeData;
+
+    enum { scopeFifoSize = 32768 };
 
 private:
+    struct AnalysisSample
+    {
+        float input = 0.0f;
+        float outputL = 0.0f;
+        float outputR = 0.0f;
+        AnalysisMode mode = AnalysisMode::Linear;
+        uint32_t generation = 0;
+    };
+
+    struct PerformanceRecord
+    {
+        float processingTimeMs = 0.0f;
+        int blockSize = 0;
+    };
+
+    static constexpr int analysisFifoSize = 1 << 17;
+    static constexpr int performanceFifoSize = 512;
+    static constexpr int performanceHistorySize = 100;
+
+    void run() override;
+    void drainAnalysisFifo();
+    void drainPerformanceFifo();
+    void processAnalysisSamples(const AnalysisSample* samples, int count);
+    void processCompletedFFT(AnalysisMode mode);
+    void configureWorkerFFT(int order);
+    void resetWorkerAnalysis(uint32_t generation);
+    void publishSnapshot();
+    void calculateTHD(AnalysisSnapshot& result);
+    void calculateIMD(AnalysisSnapshot& result);
+    void analyzeDynamicsSample(float input, float output);
+    void analyzeEnvelopeSample(float output);
+    void updatePerformanceMetrics(const PerformanceRecord& record);
+    void resizeAudioBuffers(int blockSize);
+
     std::unique_ptr<juce::AudioPluginInstance> pluginInstance;
     juce::AudioPluginFormatManager formatManager;
     mutable juce::CriticalSection pluginLock;
     juce::AudioBuffer<float> pluginProcessingBuffer;
-    juce::AudioBuffer<float> analysisInputBuffer;
     juce::String lastPluginError;
     bool pluginIsPrepared = false;
     int pluginInputChannels = 0;
     int pluginOutputChannels = 0;
 
     TestSignalGenerator signalGenerator;
-    AnalysisMode currentMode = AnalysisMode::Linear;
-    
-    // FFT
-    int fftOrder = 11;
-    int fftSize = 1 << 11;
-    
+    std::atomic<AnalysisMode> requestedMode { AnalysisMode::Linear };
+    std::atomic<float> requestedAmplitude { 0.5f };
+    std::atomic<double> requestedFrequency { 1000.0 };
+    std::atomic<int> requestedFFTOrder { 11 };
+    std::atomic<uint32_t> requestedGeneration { 1 };
+    std::atomic<uint32_t> completedLinearGeneration { 0 };
+    uint32_t audioGeneration = 0;
+    bool audioIsAnalyzing = false;
+
+    juce::AbstractFifo analysisFifo { analysisFifoSize };
+    std::vector<AnalysisSample> analysisQueue;
+    juce::AbstractFifo performanceFifo { performanceFifoSize };
+    std::array<PerformanceRecord, performanceFifoSize> performanceQueue {};
+
+    juce::AbstractFifo scopeFifo { scopeFifoSize };
+    std::vector<float> scopeData;
+
+    int workerFFTOrder = 11;
+    int workerFFTSize = 1 << 11;
     std::unique_ptr<juce::dsp::FFT> forwardFFT;
     std::unique_ptr<juce::dsp::WindowingFunction<float>> window;
-    
-    // ステレオ
-    std::vector<float> fftDataL;
-    std::vector<float> fftDataR;
-    
-    std::vector<float> complexDataL;
-    std::vector<float> complexDataR;
-    
-    std::vector<float> magnitudeSpectrumL;
-    std::vector<float> magnitudeSpectrumR;
-    std::vector<float> phaseSpectrumL;
-    std::vector<float> phaseSpectrumR;
-    
-    std::vector<float> accumulationBufferL;
-    std::vector<float> accumulationBufferR;
+    std::vector<float> complexDataL, complexDataR;
+    std::vector<float> accumulationBufferL, accumulationBufferR;
     int accumulationIndex = 0;
+    uint32_t workerGeneration = 0;
+    int dynamicsDecimationCounter = 0;
+    int envelopeDecimationCounter = 0;
 
-    bool isAnalyzing = false;
-    
-    // THD/IMD
-    float currentTHD = 0.0f;
-    float currentTHDPlusN = 0.0f;
-    float currentIMD = 0.0f;
-    std::vector<float> harmonicLevels;
-    
-    void calculateTHD();
-    void calculateIMD();
-    
-    // Dynamics
-    DynamicsData dynamicsData;
-    EnvelopeData envelopeData;
-    
-    void analyzeDynamics(const juce::AudioBuffer<float>& inputBuffer, const juce::AudioBuffer<float>& outputBuffer);
-    void analyzeEnvelope(const juce::AudioBuffer<float>& buffer);
-    
-    // Performance
-    PerformanceData performanceData;
-    double lastSampleRate = 44100.0;
-    int lastBufferSize = 512;
-    
-    void updatePerformanceMetrics(double processingTimeMs);
-    void resizeFFTBuffers();
-    
+    AnalysisSnapshot workerResult;
+    std::shared_ptr<const AnalysisSnapshot> publishedSnapshot;
+    std::array<float, performanceHistorySize> performanceHistory {};
+    int performanceHistoryWrite = 0;
+    int performanceHistoryCount = 0;
+
+    std::atomic<double> activeSampleRate { 44100.0 };
+    std::atomic<int> activeBlockSize { 512 };
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnalyzerEngine)
 };

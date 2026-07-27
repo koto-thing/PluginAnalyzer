@@ -1,113 +1,94 @@
 #include "AnalyzerEngine.h"
 
-AnalyzerEngine::AnalyzerEngine()
+namespace
 {
-    // Register all available plugin formats
+bool modeRunsContinuously(AnalyzerEngine::AnalysisMode mode)
+{
+    return mode != AnalyzerEngine::AnalysisMode::Linear;
+}
+
+bool modeUsesWindow(AnalyzerEngine::AnalysisMode mode)
+{
+    return mode != AnalyzerEngine::AnalysisMode::Linear
+        && mode != AnalyzerEngine::AnalysisMode::Performance;
+}
+}
+
+AnalyzerEngine::AnalyzerEngine()
+    : juce::Thread("PluginAnalyzer analysis")
+{
 #if JUCE_PLUGINHOST_VST3
     formatManager.addFormat(std::make_unique<juce::VST3PluginFormat>());
 #endif
-
-#if JUCE_MAC
- #if JUCE_PLUGINHOST_AU
+#if JUCE_MAC && JUCE_PLUGINHOST_AU
     formatManager.addFormat(std::make_unique<juce::AudioUnitPluginFormat>());
- #endif
 #endif
-
-#if JUCE_LINUX
- #if JUCE_PLUGINHOST_LADSPA
+#if JUCE_LINUX && JUCE_PLUGINHOST_LADSPA
     formatManager.addFormat(std::make_unique<juce::LADSPAPluginFormat>());
- #endif
-
- #if JUCE_PLUGINHOST_LV2
-    formatManager.addFormat(std::make_unique<juce::LV2PluginFormat>());
- #endif
 #endif
-    
-    // Initialize FFT and window
-    forwardFFT = std::make_unique<juce::dsp::FFT>(fftOrder);
-    window = std::make_unique<juce::dsp::WindowingFunction<float>>(fftSize, juce::dsp::WindowingFunction<float>::hann);
-    
-    // Initialize with default FFT size
-    resizeFFTBuffers();
-    
+#if JUCE_LINUX && JUCE_PLUGINHOST_LV2
+    formatManager.addFormat(std::make_unique<juce::LV2PluginFormat>());
+#endif
+
+    analysisQueue.resize(analysisFifoSize);
     scopeData.resize(scopeFifoSize, 0.0f);
-    
-    harmonicLevels.resize(10, 0.0f); // Store up to 10 harmonics
-    
-    DBG("Registered plugin formats: " << formatManager.getNumFormats());
+    workerResult.harmonicLevels.resize(10, 0.0f);
+    configureWorkerFFT(workerFFTOrder);
+    publishSnapshot();
+    startThread(juce::Thread::Priority::normal);
 }
 
 AnalyzerEngine::~AnalyzerEngine()
 {
+    signalThreadShouldExit();
+    notify();
+    stopThread(3000);
     unloadPlugin();
 }
 
-void AnalyzerEngine::resizeFFTBuffers()
+void AnalyzerEngine::configureWorkerFFT(int order)
 {
-    // Size for Real-Only transform is 2 * fftSize because output is complex
-    fftDataL.resize(fftSize * 2, 0.0f);
-    fftDataR.resize(fftSize * 2, 0.0f);
-    
-    complexDataL.resize(fftSize * 2, 0.0f);
-    complexDataR.resize(fftSize * 2, 0.0f);
-    
-    magnitudeSpectrumL.resize(fftSize / 2, -100.0f);
-    magnitudeSpectrumR.resize(fftSize / 2, -100.0f);
-    
-    phaseSpectrumL.resize(fftSize / 2, 0.0f);
-    phaseSpectrumR.resize(fftSize / 2, 0.0f);
-    
-    accumulationBufferL.resize(fftSize, 0.0f);
-    accumulationBufferR.resize(fftSize, 0.0f);
+    workerFFTOrder = juce::jlimit(8, 15, order);
+    workerFFTSize = 1 << workerFFTOrder;
+    forwardFFT = std::make_unique<juce::dsp::FFT>(workerFFTOrder);
+    window = std::make_unique<juce::dsp::WindowingFunction<float>>(
+        workerFFTSize, juce::dsp::WindowingFunction<float>::hann);
+    complexDataL.assign(static_cast<size_t>(workerFFTSize * 2), 0.0f);
+    complexDataR.assign(static_cast<size_t>(workerFFTSize * 2), 0.0f);
+    accumulationBufferL.assign(static_cast<size_t>(workerFFTSize), 0.0f);
+    accumulationBufferR.assign(static_cast<size_t>(workerFFTSize), 0.0f);
+    workerResult.magnitudeSpectrumL.assign(static_cast<size_t>(workerFFTSize / 2), -120.0f);
+    workerResult.magnitudeSpectrumR.assign(static_cast<size_t>(workerFFTSize / 2), -120.0f);
+    workerResult.phaseSpectrumL.assign(static_cast<size_t>(workerFFTSize / 2), 0.0f);
+    workerResult.phaseSpectrumR.assign(static_cast<size_t>(workerFFTSize / 2), 0.0f);
+    accumulationIndex = 0;
 }
 
-void AnalyzerEngine::setFFTOrder(int newFftOrder)
+void AnalyzerEngine::resizeAudioBuffers(int blockSize)
 {
-    if (newFftOrder < 8 || newFftOrder > 15)
-        return; // Clamp to reasonable range
-    
-    fftOrder = newFftOrder;
-    fftSize = 1 << fftOrder;
-    
-    // Recreate FFT and window
-    forwardFFT = std::make_unique<juce::dsp::FFT>(fftOrder);
-    window = std::make_unique<juce::dsp::WindowingFunction<float>>(fftSize, juce::dsp::WindowingFunction<float>::hann);
-    
-    // Resize all buffers
-    resizeFFTBuffers();
-    
-    // Reset analysis state
-    accumulationIndex = 0;
+    pluginProcessingBuffer.setSize(juce::jmax(pluginInputChannels, pluginOutputChannels),
+                                   blockSize, false, true, false);
 }
 
 void AnalyzerEngine::prepare(double sampleRate, int blockSize)
 {
-    jassert(sampleRate > 0.0);
-    jassert(blockSize > 0);
-
+    jassert(sampleRate > 0.0 && blockSize > 0);
     const juce::ScopedLock lock(pluginLock);
+    activeSampleRate.store(sampleRate, std::memory_order_release);
+    activeBlockSize.store(blockSize, std::memory_order_release);
     signalGenerator.prepare(sampleRate, blockSize);
-    performanceData.sampleRate = sampleRate;
-    performanceData.bufferSize = blockSize;
+    resizeAudioBuffers(blockSize);
 
-    analysisInputBuffer.setSize(2, blockSize, false, true, false);
-
-    lastSampleRate = sampleRate;
-    lastBufferSize = blockSize;
     if (pluginInstance)
     {
         if (pluginIsPrepared)
             pluginInstance->releaseResources();
-
-        pluginProcessingBuffer.setSize(juce::jmax(pluginInputChannels, pluginOutputChannels),
-                                       blockSize,
-                                       false,
-                                       true,
-                                       false);
         pluginInstance->setRateAndBufferSizeDetails(sampleRate, blockSize);
         pluginInstance->prepareToPlay(sampleRate, blockSize);
         pluginIsPrepared = true;
     }
+    triggerImpulseAnalysis();
+    notify();
 }
 
 void AnalyzerEngine::releaseResources()
@@ -120,10 +101,19 @@ void AnalyzerEngine::releaseResources()
     }
 }
 
-void AnalyzerEngine::setBlockSize(int /*newBlockSize*/)
+void AnalyzerEngine::setBlockSize(int newBlockSize)
 {
-    // Re-prepare if needed
-    // In this simple context, we just wait for the next prepare call from MainComponent usually
+    if (newBlockSize > 0)
+        activeBlockSize.store(newBlockSize, std::memory_order_release);
+}
+
+void AnalyzerEngine::setFFTOrder(int order)
+{
+    if (order < 8 || order > 15)
+        return;
+    requestedFFTOrder.store(order, std::memory_order_release);
+    requestedGeneration.fetch_add(1, std::memory_order_acq_rel);
+    notify();
 }
 
 bool AnalyzerEngine::loadPlugin(const juce::File& file)
@@ -135,90 +125,59 @@ bool AnalyzerEngine::loadPlugin(const juce::File& file)
         return false;
     }
 
-    juce::OwnedArray<juce::PluginDescription> foundPlugins;
-    // Iterate formats
-    for (auto format : formatManager.getFormats())
+    juce::OwnedArray<juce::PluginDescription> found;
+    for (auto* format : formatManager.getFormats())
+        format->findAllTypesForFile(found, file.getFullPathName());
+
+    if (found.isEmpty())
     {
-        format->findAllTypesForFile(foundPlugins, file.getFullPathName());
-    }
-
-    if (!foundPlugins.isEmpty())
-    {
-        juce::String error;
-        double sampleRate = 0.0;
-        int blockSize = 0;
-        {
-            const juce::ScopedLock lock(pluginLock);
-            sampleRate = lastSampleRate;
-            blockSize = lastBufferSize;
-        }
-
-        auto candidate = formatManager.createPluginInstance(*foundPlugins[0],
-                                                             sampleRate,
-                                                             blockSize,
-                                                             error);
-
-        if (candidate)
-        {
-            const auto inputChannels = candidate->getTotalNumInputChannels();
-            const auto outputChannels = candidate->getTotalNumOutputChannels();
-
-            if (inputChannels < 1 || inputChannels > 2
-                || outputChannels < 1 || outputChannels > 2)
-            {
-                const juce::ScopedLock lock(pluginLock);
-                lastPluginError = "Unsupported bus layout for \"" + candidate->getName()
-                    + "\". PluginAnalyzer currently supports mono or stereo effects "
-                      "with one or two input and output channels.\n\nDetected: "
-                    + juce::String(inputChannels) + " input(s), "
-                    + juce::String(outputChannels) + " output(s).";
-                return false;
-            }
-
-            candidate->setNonRealtime(false);
-            candidate->setRateAndBufferSizeDetails(sampleRate, blockSize);
-            candidate->prepareToPlay(sampleRate, blockSize);
-
-            juce::AudioBuffer<float> newProcessingBuffer(
-                juce::jmax(inputChannels, outputChannels), blockSize);
-            newProcessingBuffer.clear();
-
-            {
-                const juce::ScopedLock lock(pluginLock);
-                if (pluginInstance && pluginIsPrepared)
-                    pluginInstance->releaseResources();
-
-                pluginInstance = std::move(candidate);
-                pluginProcessingBuffer = std::move(newProcessingBuffer);
-                pluginInputChannels = inputChannels;
-                pluginOutputChannels = outputChannels;
-                pluginIsPrepared = true;
-                lastPluginError.clear();
-                triggerImpulseAnalysis();
-            }
-
-            DBG("Plugin Loaded: " << getPluginName()
-                << " at " << sampleRate << " Hz / " << blockSize << " samples");
-            sendChangeMessage(); // Notify UI
-            return true;
-        }
-        else
-        {
-            DBG("Failed to create plugin instance: " << error);
-            const juce::ScopedLock lock(pluginLock);
-            lastPluginError = error.isNotEmpty()
-                ? error
-                : "The plug-in instance could not be created.";
-        }
-    }
-    else
-    {
-        DBG("No plugin types found in file.");
         const juce::ScopedLock lock(pluginLock);
         lastPluginError = "No supported plug-in type was found at:\n" + file.getFullPathName();
+        return false;
     }
-    
-    return false;
+
+    juce::String error;
+    const auto sampleRate = activeSampleRate.load(std::memory_order_acquire);
+    const auto blockSize = activeBlockSize.load(std::memory_order_acquire);
+    auto candidate = formatManager.createPluginInstance(*found[0], sampleRate, blockSize, error);
+    if (!candidate)
+    {
+        const juce::ScopedLock lock(pluginLock);
+        lastPluginError = error.isNotEmpty() ? error : "The plug-in instance could not be created.";
+        return false;
+    }
+
+    const auto inputs = candidate->getTotalNumInputChannels();
+    const auto outputs = candidate->getTotalNumOutputChannels();
+    if (inputs < 1 || inputs > 2 || outputs < 1 || outputs > 2)
+    {
+        const juce::ScopedLock lock(pluginLock);
+        lastPluginError = "Unsupported bus layout for \"" + candidate->getName()
+            + "\". PluginAnalyzer supports mono or stereo effects.\n\nDetected: "
+            + juce::String(inputs) + " input(s), " + juce::String(outputs) + " output(s).";
+        return false;
+    }
+
+    candidate->setNonRealtime(false);
+    candidate->setRateAndBufferSizeDetails(sampleRate, blockSize);
+    candidate->prepareToPlay(sampleRate, blockSize);
+    juce::AudioBuffer<float> newBuffer(juce::jmax(inputs, outputs), blockSize);
+    newBuffer.clear();
+
+    {
+        const juce::ScopedLock lock(pluginLock);
+        if (pluginInstance && pluginIsPrepared)
+            pluginInstance->releaseResources();
+        pluginInstance = std::move(candidate);
+        pluginProcessingBuffer = std::move(newBuffer);
+        pluginInputChannels = inputs;
+        pluginOutputChannels = outputs;
+        pluginIsPrepared = true;
+        lastPluginError.clear();
+    }
+    triggerImpulseAnalysis();
+    sendChangeMessage();
+    return true;
 }
 
 void AnalyzerEngine::unloadPlugin()
@@ -227,11 +186,9 @@ void AnalyzerEngine::unloadPlugin()
         const juce::ScopedLock lock(pluginLock);
         if (pluginInstance && pluginIsPrepared)
             pluginInstance->releaseResources();
-
         pluginInstance.reset();
         pluginProcessingBuffer.setSize(0, 0);
-        pluginInputChannels = 0;
-        pluginOutputChannels = 0;
+        pluginInputChannels = pluginOutputChannels = 0;
         pluginIsPrepared = false;
         lastPluginError.clear();
     }
@@ -252,499 +209,421 @@ juce::String AnalyzerEngine::getLastPluginError() const
 
 void AnalyzerEngine::triggerImpulseAnalysis()
 {
-    signalGenerator.reset();
-    isAnalyzing = true;
-    accumulationIndex = 0;
-    std::fill(accumulationBufferL.begin(), accumulationBufferL.end(), 0.0f);
-    std::fill(accumulationBufferR.begin(), accumulationBufferR.end(), 0.0f);
-    std::fill(fftDataL.begin(), fftDataL.end(), 0.0f);
-    std::fill(fftDataR.begin(), fftDataR.end(), 0.0f);
+    requestedGeneration.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void AnalyzerEngine::setAnalysisMode(AnalysisMode mode)
 {
-    if (currentMode != mode)
-    {
-        currentMode = mode;
-        triggerImpulseAnalysis(); // Reset state
-    }
+    if (requestedMode.exchange(mode, std::memory_order_acq_rel) != mode)
+        triggerImpulseAnalysis();
 }
 
 void AnalyzerEngine::setInputAmplitude(float amplitude)
 {
-    signalGenerator.setAmplitude(amplitude);
-}
-
-float AnalyzerEngine::getInputAmplitude() const
-{
-    return signalGenerator.getAmplitude();
+    requestedAmplitude.store(juce::jlimit(0.0f, 1.0f, amplitude), std::memory_order_release);
 }
 
 void AnalyzerEngine::setTestFrequency(double frequency)
 {
-    signalGenerator.setFrequency(frequency);
+    requestedFrequency.store(juce::jlimit(20.0, 20000.0, frequency), std::memory_order_release);
 }
 
-double AnalyzerEngine::getTestFrequency() const
+std::shared_ptr<const AnalyzerEngine::AnalysisSnapshot> AnalyzerEngine::getAnalysisSnapshot() const
 {
-    return signalGenerator.getFrequency();
-}
-
-void AnalyzerEngine::calculateTHD()
-{
-    // Calculate THD from magnitude spectrum (Left channel)
-    double testFreq = signalGenerator.getFrequency();
-    double binWidth = lastSampleRate / fftSize; // Sample rate / FFT size
-    
-    int fundamentalBin = (int)(testFreq / binWidth + 0.5);
-    
-    if (fundamentalBin < 1 || fundamentalBin >= fftSize / 2)
-    {
-        currentTHD = 0.0f;
-        currentTHDPlusN = 0.0f;
-        return;
-    }
-    
-    // Get fundamental magnitude (in linear scale)
-    float fundamentalMag = juce::Decibels::decibelsToGain(magnitudeSpectrumL[fundamentalBin]);
-    
-    // Calculate harmonic magnitudes
-    double sumHarmonicsSquared = 0.0;
-    double sumAllNoiseSquared = 0.0;
-    
-    for (int h = 2; h <= 10; ++h) // Up to 10th harmonic
-    {
-        int harmonicBin = fundamentalBin * h;
-        if (harmonicBin >= fftSize / 2) break;
-        
-        float harmonicMag = juce::Decibels::decibelsToGain(magnitudeSpectrumL[harmonicBin]);
-        sumHarmonicsSquared += harmonicMag * harmonicMag;
-        
-        if (h - 2 < harmonicLevels.size())
-            harmonicLevels[h - 2] = magnitudeSpectrumL[harmonicBin];
-    }
-    
-    // Calculate total noise (excluding fundamental and harmonics)
-    for (int i = 1; i < fftSize / 2; ++i)
-    {
-        bool isHarmonic = false;
-        for (int h = 1; h <= 10; ++h)
-        {
-            if (i == fundamentalBin * h)
-            {
-                isHarmonic = true;
-                break;
-            }
-        }
-        
-        if (!isHarmonic)
-        {
-            float mag = juce::Decibels::decibelsToGain(magnitudeSpectrumL[i]);
-            sumAllNoiseSquared += mag * mag;
-        }
-    }
-    
-    // THD = sqrt(sum of harmonics squared) / fundamental
-    currentTHD = (float)(std::sqrt(sumHarmonicsSquared) / fundamentalMag) * 100.0f;
-    
-    // THD+N = sqrt(sum of harmonics + noise squared) / fundamental
-    currentTHDPlusN = (float)(std::sqrt(sumHarmonicsSquared + sumAllNoiseSquared) / fundamentalMag) * 100.0f;
-}
-
-void AnalyzerEngine::calculateIMD()
-{
-    // Simplified IMD calculation (SMPTE method)
-    // Measure intermodulation products at f2 +/- f1, f2 +/- 2*f1, etc.
-    
-    // double binWidth = 44100.0 / fftSize; // Unused variable warning fix
-    
-    // For now, just set to 0 - full IMD implementation would require dual-tone setup
-    currentIMD = 0.0f;
-}
-
-void AnalyzerEngine::analyzeDynamics(const juce::AudioBuffer<float>& inputBuffer, const juce::AudioBuffer<float>& outputBuffer)
-{
-    // Analyze compression/expansion characteristics
-    int numSamples = inputBuffer.getNumSamples();
-    
-    // Calculate RMS for input and output
-    auto calculateRMS = [](const float* data, int samples) -> float {
-        float sumSquares = 0.0f;
-        for (int i = 0; i < samples; ++i)
-            sumSquares += data[i] * data[i];
-        return std::sqrt(sumSquares / samples);
-    };
-    
-    float inputRMS = calculateRMS(inputBuffer.getReadPointer(0), numSamples);
-    float outputRMS = calculateRMS(outputBuffer.getReadPointer(0), numSamples);
-    
-    float inputDB = juce::Decibels::gainToDecibels(inputRMS, -100.0f);
-    float outputDB = juce::Decibels::gainToDecibels(outputRMS, -100.0f);
-    
-    // Store data point
-    dynamicsData.inputLevels.push_back(inputDB);
-    dynamicsData.outputLevels.push_back(outputDB);
-    
-    // Keep only recent data (for performance)
-    if (dynamicsData.inputLevels.size() > 1000)
-    {
-        dynamicsData.inputLevels.erase(dynamicsData.inputLevels.begin());
-        dynamicsData.outputLevels.erase(dynamicsData.outputLevels.begin());
-    }
-    
-    // Estimate compression ratio from recent data
-    if (dynamicsData.inputLevels.size() > 10)
-    {
-        int n = (int)dynamicsData.inputLevels.size();
-        float inputChange = dynamicsData.inputLevels[n-1] - dynamicsData.inputLevels[n-10];
-        float outputChange = dynamicsData.outputLevels[n-1] - dynamicsData.outputLevels[n-10];
-        
-        if (std::abs(inputChange) > 1.0f)
-        {
-            dynamicsData.compressionRatio = inputChange / outputChange;
-        }
-    }
-}
-
-void AnalyzerEngine::analyzeEnvelope(const juce::AudioBuffer<float>& buffer)
-{
-    // Analyze attack and release envelope characteristics
-    int numSamples = buffer.getNumSamples();
-    const float* data = buffer.getReadPointer(0);
-    
-    // Calculate envelope (peak detection with smoothing)
-    for (int i = 0; i < numSamples; ++i)
-    {
-        float absValue = std::abs(data[i]);
-        
-        // Simple time point (in seconds)
-        float timePoint = (float)(envelopeData.envelopeValues.size() / lastSampleRate);
-        
-        envelopeData.timePoints.push_back(timePoint);
-        envelopeData.envelopeValues.push_back(absValue);
-    }
-    
-    // Keep only recent envelope data
-    const auto maxEnvelopeSamples = static_cast<size_t>(lastSampleRate * 10.0);
-    if (envelopeData.envelopeValues.size() > maxEnvelopeSamples) // Max 10 seconds
-    {
-        int excess = (int)(envelopeData.envelopeValues.size() - maxEnvelopeSamples);
-        envelopeData.timePoints.erase(envelopeData.timePoints.begin(), envelopeData.timePoints.begin() + excess);
-        envelopeData.envelopeValues.erase(envelopeData.envelopeValues.begin(), envelopeData.envelopeValues.begin() + excess);
-    }
-    
-    // Estimate attack and release times from envelope data
-    if (envelopeData.envelopeValues.size() > 100)
-    {
-        // Find attack time (10% to 90% rise time)
-        float maxVal = *std::max_element(envelopeData.envelopeValues.end() - 100, envelopeData.envelopeValues.end());
-        float threshold10 = maxVal * 0.1f;
-        float threshold90 = maxVal * 0.9f;
-        
-        int idx10 = -1, idx90 = -1;
-        for (int i = (int)envelopeData.envelopeValues.size() - 100; i < envelopeData.envelopeValues.size(); ++i)
-        {
-            if (idx10 < 0 && envelopeData.envelopeValues[i] >= threshold10)
-                idx10 = i;
-            if (idx90 < 0 && envelopeData.envelopeValues[i] >= threshold90)
-                idx90 = i;
-        }
-        
-        if (idx10 >= 0 && idx90 >= 0 && idx90 > idx10)
-        {
-            envelopeData.attackTime = envelopeData.timePoints[idx90] - envelopeData.timePoints[idx10];
-        }
-    }
-}
-
-void AnalyzerEngine::updatePerformanceMetrics(double processingTimeMs)
-{
-    // Add to history
-    performanceData.processingTimeHistory.push_back((float)processingTimeMs);
-    
-    // Keep only recent 100 measurements
-    if (performanceData.processingTimeHistory.size() > 100)
-    {
-        performanceData.processingTimeHistory.erase(performanceData.processingTimeHistory.begin());
-    }
-    
-    // Calculate average
-    float sum = 0.0f;
-    float peak = 0.0f;
-    for (float time : performanceData.processingTimeHistory)
-    {
-        sum += time;
-        if (time > peak)
-            peak = time;
-    }
-    
-    performanceData.averageProcessingTime = sum / performanceData.processingTimeHistory.size();
-    performanceData.peakProcessingTime = peak;
-    
-    // Calculate CPU usage percentage
-    // Available time = buffer size / sample rate (in milliseconds)
-    double availableTimeMs = (lastBufferSize / lastSampleRate) * 1000.0;
-    performanceData.cpuUsagePercent = (float)((processingTimeMs / availableTimeMs) * 100.0);
+    return std::atomic_load_explicit(&publishedSnapshot, std::memory_order_acquire);
 }
 
 void AnalyzerEngine::processAudio(juce::AudioBuffer<float>& buffer)
 {
-    // Serialise the complete callback against plug-in replacement, release, and
-    // re-prepare. The lock is never taken while scanning or constructing a new
-    // plug-in, only during the short lifecycle hand-off.
-    const juce::ScopedLock lifecycleLock(pluginLock);
-
-    // In Harmonic/WhiteNoise/SineSweep/THDSweep/Performance mode, we always run. In Linear, we wait for trigger.
-    if (currentMode == AnalysisMode::Linear && !isAnalyzing) return;
-    if (currentMode == AnalysisMode::Harmonic || 
-        currentMode == AnalysisMode::WhiteNoise || 
-        currentMode == AnalysisMode::SineSweep ||
-        currentMode == AnalysisMode::THDSweep ||
-        currentMode == AnalysisMode::IMD ||
-        currentMode == AnalysisMode::Dynamics ||
-        currentMode == AnalysisMode::Performance) 
-        isAnalyzing = true; 
-
-    const int numSamples = buffer.getNumSamples();
-    const int numChannels = buffer.getNumChannels();
+    const auto numSamples = buffer.getNumSamples();
+    const auto numChannels = buffer.getNumChannels();
     if (numSamples <= 0 || numChannels <= 0)
         return;
-    
-    // 1. Generate Signal
-    TestSignalGenerator::SignalType sigType;
-    
-    switch (currentMode)
+
+    const auto generation = requestedGeneration.load(std::memory_order_acquire);
+    const auto mode = requestedMode.load(std::memory_order_acquire);
+    if (generation != audioGeneration)
     {
-        case AnalysisMode::Linear:
-            sigType = TestSignalGenerator::SignalType::Impulse;
-            break;
+        audioGeneration = generation;
+        audioIsAnalyzing = true;
+        signalGenerator.reset();
+    }
+    if (modeRunsContinuously(mode))
+        audioIsAnalyzing = true;
+    else if (completedLinearGeneration.load(std::memory_order_acquire) == generation)
+        audioIsAnalyzing = false;
+    if (!audioIsAnalyzing)
+        return;
+
+    signalGenerator.setAmplitude(requestedAmplitude.load(std::memory_order_relaxed));
+    signalGenerator.setFrequency(requestedFrequency.load(std::memory_order_relaxed));
+
+    TestSignalGenerator::SignalType signalType = TestSignalGenerator::SignalType::Impulse;
+    switch (mode)
+    {
         case AnalysisMode::Harmonic:
         case AnalysisMode::THDSweep:
         case AnalysisMode::IMD:
-            sigType = TestSignalGenerator::SignalType::Sine;
-            break;
-        case AnalysisMode::WhiteNoise:
-            sigType = TestSignalGenerator::SignalType::WhiteNoise;
-            break;
-        case AnalysisMode::SineSweep:
-            sigType = TestSignalGenerator::SignalType::SineSweep;
-            break;
-        case AnalysisMode::Dynamics:
-            sigType = TestSignalGenerator::SignalType::Ramp;
-            break;
-        case AnalysisMode::Hammerstein:
-            sigType = TestSignalGenerator::SignalType::AttackRelease;
-            break;
-        case AnalysisMode::Performance:
-            sigType = TestSignalGenerator::SignalType::Sine;  // Use sine wave for performance testing
-            break;
-        default:
-            sigType = TestSignalGenerator::SignalType::Impulse;
-            break;
+        case AnalysisMode::Performance: signalType = TestSignalGenerator::SignalType::Sine; break;
+        case AnalysisMode::WhiteNoise: signalType = TestSignalGenerator::SignalType::WhiteNoise; break;
+        case AnalysisMode::SineSweep: signalType = TestSignalGenerator::SignalType::SineSweep; break;
+        case AnalysisMode::Dynamics: signalType = TestSignalGenerator::SignalType::Ramp; break;
+        case AnalysisMode::Hammerstein: signalType = TestSignalGenerator::SignalType::AttackRelease; break;
+        case AnalysisMode::Linear: break;
     }
-    
-    signalGenerator.fillBuffer(buffer, sigType, 0);
-    
+
+    signalGenerator.fillBuffer(buffer, signalType, 0);
     for (int channel = 1; channel < numChannels; ++channel)
         buffer.copyFrom(channel, 0, buffer, 0, 0, numSamples);
 
-    // Store the generated input in memory allocated by prepare().
-    const bool canCaptureInput = numChannels <= 2 && numSamples <= lastBufferSize;
-    if (canCaptureInput)
+    // Reserve the FIFO space before processing so the original input can be
+    // copied directly into its final, preallocated location.
+    int write1 = 0, size1 = 0, write2 = 0, size2 = 0;
+    analysisFifo.prepareToWrite(numSamples, write1, size1, write2, size2);
+    auto captureInput = [&](int start, int count, int sourceOffset)
     {
-        analysisInputBuffer.setSize(numChannels, numSamples, false, false, true);
-        for (int channel = 0; channel < numChannels; ++channel)
-            analysisInputBuffer.copyFrom(channel, 0, buffer, channel, 0, numSamples);
-    }
-
-    // 2. Process Plugin with performance measurement
-    if (pluginInstance && pluginIsPrepared
-        && numSamples <= lastBufferSize)
-    {
-        const auto pluginBufferChannels = juce::jmax(pluginInputChannels, pluginOutputChannels);
-        pluginProcessingBuffer.setSize(pluginBufferChannels,
-                                       numSamples,
-                                       false,
-                                       false,
-                                       true);
-        pluginProcessingBuffer.clear();
-
-        for (int channel = 0; channel < pluginInputChannels; ++channel)
+        const auto* input = buffer.getReadPointer(0) + sourceOffset;
+        for (int i = 0; i < count; ++i)
         {
-            const auto sourceChannel = juce::jmin(channel, numChannels - 1);
-            pluginProcessingBuffer.copyFrom(channel,
-                                            0,
-                                            buffer,
-                                            sourceChannel,
-                                            0,
-                                            numSamples);
+            auto& sample = analysisQueue[static_cast<size_t>(start + i)];
+            sample.input = input[i];
+            sample.mode = mode;
+            sample.generation = generation;
         }
+    };
+    captureInput(write1, size1, 0);
+    captureInput(write2, size2, size1);
 
-        const auto startTime = juce::Time::getMillisecondCounterHiRes();
-        juce::MidiBuffer midi;
-        pluginInstance->processBlock(pluginProcessingBuffer, midi);
-        const auto processingTimeMs =
-            juce::Time::getMillisecondCounterHiRes() - startTime;
-
-        buffer.clear();
-        for (int channel = 0; channel < numChannels; ++channel)
+    double processingTimeMs = 0.0;
+    bool processedPlugin = false;
+    if (pluginLock.tryEnter())
+    {
+        if (pluginInstance && pluginIsPrepared
+            && numSamples <= activeBlockSize.load(std::memory_order_relaxed))
         {
-            const auto sourceChannel = juce::jmin(channel, pluginOutputChannels - 1);
-            buffer.copyFrom(channel,
-                            0,
-                            pluginProcessingBuffer,
-                            sourceChannel,
-                            0,
-                            numSamples);
+            const auto channels = juce::jmax(pluginInputChannels, pluginOutputChannels);
+            pluginProcessingBuffer.setSize(channels, numSamples, false, false, true);
+            pluginProcessingBuffer.clear();
+            for (int channel = 0; channel < pluginInputChannels; ++channel)
+                pluginProcessingBuffer.copyFrom(channel, 0, buffer,
+                    juce::jmin(channel, numChannels - 1), 0, numSamples);
+
+            const auto start = juce::Time::getMillisecondCounterHiRes();
+            juce::MidiBuffer midi;
+            pluginInstance->processBlock(pluginProcessingBuffer, midi);
+            processingTimeMs = juce::Time::getMillisecondCounterHiRes() - start;
+            processedPlugin = true;
+
+            buffer.clear();
+            for (int channel = 0; channel < numChannels; ++channel)
+                buffer.copyFrom(channel, 0, pluginProcessingBuffer,
+                    juce::jmin(channel, pluginOutputChannels - 1), 0, numSamples);
         }
-
-        if (currentMode == AnalysisMode::Performance)
-            updatePerformanceMetrics(processingTimeMs);
+        pluginLock.exit();
     }
 
-    // 3. Dynamics Analysis (for Dynamics and Hammerstein modes)
-    if (currentMode == AnalysisMode::Dynamics)
+    auto captureOutput = [&](int start, int count, int sourceOffset)
     {
-        if (canCaptureInput)
-            analyzeDynamics(analysisInputBuffer, buffer);
-    }
-    else if (currentMode == AnalysisMode::Hammerstein)
-    {
-        analyzeEnvelope(buffer);
-    }
-
-    // 4. FFT Analysis
-    if (accumulationIndex < fftSize)
-    {
-        auto* channelDataL = buffer.getReadPointer(0);
-        auto* channelDataR = (buffer.getNumChannels() > 1) ? buffer.getReadPointer(1) : channelDataL;
-        
-        int samplesToCopy = std::min(numSamples, fftSize - accumulationIndex);
-        
-        for (int i = 0; i < samplesToCopy; ++i)
+        const auto* left = buffer.getReadPointer(0) + sourceOffset;
+        const auto* right = buffer.getReadPointer(juce::jmin(1, numChannels - 1)) + sourceOffset;
+        for (int i = 0; i < count; ++i)
         {
-            accumulationBufferL[accumulationIndex + i] = channelDataL[i];
-            accumulationBufferR[accumulationIndex + i] = channelDataR[i];
+            auto& sample = analysisQueue[static_cast<size_t>(start + i)];
+            sample.outputL = left[i];
+            sample.outputR = right[i];
         }
-        accumulationIndex += samplesToCopy;
+    };
+    captureOutput(write1, size1, 0);
+    captureOutput(write2, size2, size1);
+    analysisFifo.finishedWrite(size1 + size2);
 
-        // If block filled
-        if (accumulationIndex >= fftSize)
+    if (mode == AnalysisMode::Performance && processedPlugin)
+    {
+        int p1 = 0, n1 = 0, p2 = 0, n2 = 0;
+        performanceFifo.prepareToWrite(1, p1, n1, p2, n2);
+        if (n1 == 1)
         {
-             // Process Left (Real-Only -> Complex)
-             std::fill(complexDataL.begin(), complexDataL.end(), 0.0f);
-             std::copy(accumulationBufferL.begin(), accumulationBufferL.end(), complexDataL.begin());
-             
-             // Apply windowing for continuous signals
-             if (currentMode == AnalysisMode::Harmonic || 
-                 currentMode == AnalysisMode::WhiteNoise || 
-                 currentMode == AnalysisMode::SineSweep ||
-                 currentMode == AnalysisMode::THDSweep ||
-                 currentMode == AnalysisMode::IMD ||
-                 currentMode == AnalysisMode::Dynamics ||
-                 currentMode == AnalysisMode::Hammerstein)
-             {
-                 window->multiplyWithWindowingTable(complexDataL.data(), fftSize);
-             }
-             
-             forwardFFT->performRealOnlyForwardTransform(complexDataL.data());
-             
-             // Process Right
-             std::fill(complexDataR.begin(), complexDataR.end(), 0.0f);
-             std::copy(accumulationBufferR.begin(), accumulationBufferR.end(), complexDataR.begin());
-             
-             if (currentMode == AnalysisMode::Harmonic || 
-                 currentMode == AnalysisMode::WhiteNoise || 
-                 currentMode == AnalysisMode::SineSweep ||
-                 currentMode == AnalysisMode::THDSweep ||
-                 currentMode == AnalysisMode::IMD ||
-                 currentMode == AnalysisMode::Dynamics ||
-                 currentMode == AnalysisMode::Hammerstein)
-             {
-                 window->multiplyWithWindowingTable(complexDataR.data(), fftSize);
-             }
-             
-             forwardFFT->performRealOnlyForwardTransform(complexDataR.data());
-             
-             // Extract Mag/Phase
-             auto extract = [&](const std::vector<float>& complexData, std::vector<float>& magData, std::vector<float>& phaseData) {
-                 for (int i = 0; i < fftSize / 2; ++i)
-                 {
-                     float re = 0.0f;
-                     float im = 0.0f;
-                     
-                     if (i == 0) {
-                         re = complexData[0];
-                         im = 0.0f;
-                     } else if (i == fftSize / 2 - 1) {
-                         // Nyquist case
-                     }
-                     
-                     if (i > 0 && i < fftSize / 2) {
-                         re = complexData[2 * i];
-                         im = complexData[2 * i + 1];
-                     }
-                     
-                     float mag = std::sqrt(re * re + im * im);
-                     if (i == 0) mag = std::abs(complexData[0]);
-                     
-                     if (std::isnan(mag) || std::isinf(mag)) mag = 0.0f;
-                     magData[i] = juce::Decibels::gainToDecibels(mag, -120.0f);
-                     phaseData[i] = std::atan2(im, re);
-                 }
-             };
-
-             extract(complexDataL, magnitudeSpectrumL, phaseSpectrumL);
-             extract(complexDataR, magnitudeSpectrumR, phaseSpectrumR);
-             
-             // Calculate THD/IMD if in appropriate mode
-             if (currentMode == AnalysisMode::Harmonic || 
-                 currentMode == AnalysisMode::THDSweep)
-             {
-                 calculateTHD();
-             }
-             else if (currentMode == AnalysisMode::IMD)
-             {
-                 calculateIMD();
-             }
-             
-             // Reset for next block
-             accumulationIndex = 0;
-             if (currentMode == AnalysisMode::Linear) 
-             {
-                 isAnalyzing = false;
-                 DBG("Linear Analysis Finished.");
-             }
-             
-             std::fill(accumulationBufferL.begin(), accumulationBufferL.end(), 0.0f);
-             std::fill(accumulationBufferR.begin(), accumulationBufferR.end(), 0.0f);
-             sendChangeMessage(); 
+            performanceQueue[static_cast<size_t>(p1)] =
+                { static_cast<float>(processingTimeMs), numSamples };
+            performanceFifo.finishedWrite(1);
         }
     }
-    
-    // 5. Oscilloscope Update
-    addToScopeFifo(buffer.getReadPointer(0), buffer.getNumSamples());
+
+    addToScopeFifo(buffer.getReadPointer(0), numSamples);
+    notify();
+}
+
+void AnalyzerEngine::run()
+{
+    while (!threadShouldExit())
+    {
+        drainAnalysisFifo();
+        drainPerformanceFifo();
+        wait(20);
+    }
+    drainAnalysisFifo();
+    drainPerformanceFifo();
+}
+
+void AnalyzerEngine::drainAnalysisFifo()
+{
+    for (;;)
+    {
+        int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
+        analysisFifo.prepareToRead(4096, start1, size1, start2, size2);
+        if (size1 + size2 == 0)
+            break;
+        processAnalysisSamples(analysisQueue.data() + start1, size1);
+        processAnalysisSamples(analysisQueue.data() + start2, size2);
+        analysisFifo.finishedRead(size1 + size2);
+    }
+}
+
+void AnalyzerEngine::processAnalysisSamples(const AnalysisSample* samples, int count)
+{
+    for (int i = 0; i < count; ++i)
+    {
+        const auto& sample = samples[i];
+        const auto desiredOrder = requestedFFTOrder.load(std::memory_order_acquire);
+        if (sample.generation != workerGeneration || desiredOrder != workerFFTOrder)
+        {
+            if (desiredOrder != workerFFTOrder)
+                configureWorkerFFT(desiredOrder);
+            resetWorkerAnalysis(sample.generation);
+        }
+
+        if (sample.mode == AnalysisMode::Dynamics)
+            analyzeDynamicsSample(sample.input, sample.outputL);
+        else if (sample.mode == AnalysisMode::Hammerstein)
+            analyzeEnvelopeSample(sample.outputL);
+
+        accumulationBufferL[static_cast<size_t>(accumulationIndex)] = sample.outputL;
+        accumulationBufferR[static_cast<size_t>(accumulationIndex)] = sample.outputR;
+        if (++accumulationIndex == workerFFTSize)
+        {
+            processCompletedFFT(sample.mode);
+            accumulationIndex = 0;
+        }
+    }
+}
+
+void AnalyzerEngine::resetWorkerAnalysis(uint32_t generation)
+{
+    workerGeneration = generation;
+    accumulationIndex = 0;
+    std::fill(accumulationBufferL.begin(), accumulationBufferL.end(), 0.0f);
+    std::fill(accumulationBufferR.begin(), accumulationBufferR.end(), 0.0f);
+    workerResult.dynamics = {};
+    workerResult.envelope = {};
+    dynamicsDecimationCounter = 0;
+    envelopeDecimationCounter = 0;
+}
+
+void AnalyzerEngine::processCompletedFFT(AnalysisMode mode)
+{
+    std::fill(complexDataL.begin(), complexDataL.end(), 0.0f);
+    std::fill(complexDataR.begin(), complexDataR.end(), 0.0f);
+    std::copy(accumulationBufferL.begin(), accumulationBufferL.end(), complexDataL.begin());
+    std::copy(accumulationBufferR.begin(), accumulationBufferR.end(), complexDataR.begin());
+    if (modeUsesWindow(mode))
+    {
+        window->multiplyWithWindowingTable(complexDataL.data(), workerFFTSize);
+        window->multiplyWithWindowingTable(complexDataR.data(), workerFFTSize);
+    }
+    forwardFFT->performRealOnlyForwardTransform(complexDataL.data());
+    forwardFFT->performRealOnlyForwardTransform(complexDataR.data());
+
+    auto extract = [this](const std::vector<float>& complex,
+                          std::vector<float>& magnitude,
+                          std::vector<float>& phase)
+    {
+        for (int bin = 0; bin < workerFFTSize / 2; ++bin)
+        {
+            const auto re = bin == 0 ? complex[0] : complex[static_cast<size_t>(2 * bin)];
+            const auto im = bin == 0 ? 0.0f : complex[static_cast<size_t>(2 * bin + 1)];
+            const auto gain = std::hypot(re, im);
+            magnitude[static_cast<size_t>(bin)] =
+                juce::Decibels::gainToDecibels(std::isfinite(gain) ? gain : 0.0f, -120.0f);
+            phase[static_cast<size_t>(bin)] = std::atan2(im, re);
+        }
+    };
+    extract(complexDataL, workerResult.magnitudeSpectrumL, workerResult.phaseSpectrumL);
+    extract(complexDataR, workerResult.magnitudeSpectrumR, workerResult.phaseSpectrumR);
+
+    workerResult.sampleRate = activeSampleRate.load(std::memory_order_acquire);
+    if (mode == AnalysisMode::Harmonic || mode == AnalysisMode::THDSweep)
+        calculateTHD(workerResult);
+    else if (mode == AnalysisMode::IMD)
+        calculateIMD(workerResult);
+    publishSnapshot();
+    if (mode == AnalysisMode::Linear)
+        completedLinearGeneration.store(workerGeneration, std::memory_order_release);
+}
+
+void AnalyzerEngine::calculateTHD(AnalysisSnapshot& result)
+{
+    const auto binWidth = result.sampleRate / workerFFTSize;
+    const auto fundamental = juce::roundToInt(
+        requestedFrequency.load(std::memory_order_relaxed) / binWidth);
+    if (fundamental < 1 || fundamental >= workerFFTSize / 2)
+    {
+        result.thd = result.thdPlusN = 0.0f;
+        return;
+    }
+
+    const auto fundamentalGain = juce::Decibels::decibelsToGain(
+        result.magnitudeSpectrumL[static_cast<size_t>(fundamental)]);
+    if (fundamentalGain <= 1.0e-12f)
+    {
+        result.thd = result.thdPlusN = 0.0f;
+        return;
+    }
+
+    double harmonicsSquared = 0.0, noiseSquared = 0.0;
+    std::fill(result.harmonicLevels.begin(), result.harmonicLevels.end(), -120.0f);
+    for (int harmonic = 2; harmonic <= 10; ++harmonic)
+    {
+        const auto bin = fundamental * harmonic;
+        if (bin >= workerFFTSize / 2)
+            break;
+        const auto db = result.magnitudeSpectrumL[static_cast<size_t>(bin)];
+        result.harmonicLevels[static_cast<size_t>(harmonic - 2)] = db;
+        const auto gain = juce::Decibels::decibelsToGain(db);
+        harmonicsSquared += gain * gain;
+    }
+    for (int bin = 1; bin < workerFFTSize / 2; ++bin)
+    {
+        bool excluded = false;
+        for (int harmonic = 1; harmonic <= 10; ++harmonic)
+            excluded = excluded || bin == fundamental * harmonic;
+        if (!excluded)
+        {
+            const auto gain = juce::Decibels::decibelsToGain(
+                result.magnitudeSpectrumL[static_cast<size_t>(bin)]);
+            noiseSquared += gain * gain;
+        }
+    }
+    result.thd = static_cast<float>(std::sqrt(harmonicsSquared) / fundamentalGain * 100.0);
+    result.thdPlusN = static_cast<float>(
+        std::sqrt(harmonicsSquared + noiseSquared) / fundamentalGain * 100.0);
+}
+
+void AnalyzerEngine::calculateIMD(AnalysisSnapshot& result)
+{
+    result.imd = 0.0f; // Numerical calibration belongs to Phase 4.
+}
+
+void AnalyzerEngine::analyzeDynamicsSample(float input, float output)
+{
+    // Decimate to keep the worker-side snapshot compact and bounded.
+    static constexpr int decimation = 256;
+    if (++dynamicsDecimationCounter < decimation)
+        return;
+    dynamicsDecimationCounter = 0;
+    auto& dynamics = workerResult.dynamics;
+    if (dynamics.inputLevels.size() == 1000)
+    {
+        dynamics.inputLevels.erase(dynamics.inputLevels.begin());
+        dynamics.outputLevels.erase(dynamics.outputLevels.begin());
+    }
+    dynamics.inputLevels.push_back(juce::Decibels::gainToDecibels(std::abs(input), -100.0f));
+    dynamics.outputLevels.push_back(juce::Decibels::gainToDecibels(std::abs(output), -100.0f));
+    if (dynamics.inputLevels.size() > 10)
+    {
+        const auto n = dynamics.inputLevels.size();
+        const auto inputChange = dynamics.inputLevels[n - 1] - dynamics.inputLevels[n - 10];
+        const auto outputChange = dynamics.outputLevels[n - 1] - dynamics.outputLevels[n - 10];
+        if (std::abs(inputChange) > 1.0f && std::abs(outputChange) > 0.01f)
+            dynamics.compressionRatio = inputChange / outputChange;
+    }
+}
+
+void AnalyzerEngine::analyzeEnvelopeSample(float output)
+{
+    static constexpr int decimation = 32;
+    if (++envelopeDecimationCounter < decimation)
+        return;
+    envelopeDecimationCounter = 0;
+    auto& envelope = workerResult.envelope;
+    if (envelope.envelopeValues.size() == 4096)
+    {
+        envelope.envelopeValues.erase(envelope.envelopeValues.begin());
+        envelope.timePoints.erase(envelope.timePoints.begin());
+    }
+    envelope.envelopeValues.push_back(std::abs(output));
+    envelope.timePoints.push_back(static_cast<float>(
+        envelope.timePoints.size() * decimation / activeSampleRate.load(std::memory_order_relaxed)));
+}
+
+void AnalyzerEngine::drainPerformanceFifo()
+{
+    for (;;)
+    {
+        int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
+        performanceFifo.prepareToRead(performanceHistorySize, start1, size1, start2, size2);
+        if (size1 + size2 == 0)
+            break;
+        for (int i = 0; i < size1; ++i)
+            updatePerformanceMetrics(performanceQueue[static_cast<size_t>(start1 + i)]);
+        for (int i = 0; i < size2; ++i)
+            updatePerformanceMetrics(performanceQueue[static_cast<size_t>(start2 + i)]);
+        performanceFifo.finishedRead(size1 + size2);
+    }
+}
+
+void AnalyzerEngine::updatePerformanceMetrics(const PerformanceRecord& record)
+{
+    performanceHistory[static_cast<size_t>(performanceHistoryWrite)] = record.processingTimeMs;
+    performanceHistoryWrite = (performanceHistoryWrite + 1) % performanceHistorySize;
+    performanceHistoryCount = juce::jmin(performanceHistoryCount + 1, performanceHistorySize);
+
+    auto& performance = workerResult.performance;
+    performance.processingTimeHistory.resize(static_cast<size_t>(performanceHistoryCount));
+    float sum = 0.0f, peak = 0.0f;
+    for (int i = 0; i < performanceHistoryCount; ++i)
+    {
+        const auto index = (performanceHistoryWrite - performanceHistoryCount + i
+                            + performanceHistorySize) % performanceHistorySize;
+        const auto value = performanceHistory[static_cast<size_t>(index)];
+        performance.processingTimeHistory[static_cast<size_t>(i)] = value;
+        sum += value;
+        peak = juce::jmax(peak, value);
+    }
+    performance.averageProcessingTime = sum / static_cast<float>(performanceHistoryCount);
+    performance.peakProcessingTime = peak;
+    performance.bufferSize = record.blockSize;
+    performance.sampleRate = activeSampleRate.load(std::memory_order_acquire);
+    const auto availableMs = record.blockSize / performance.sampleRate * 1000.0;
+    performance.cpuUsagePercent = static_cast<float>(record.processingTimeMs / availableMs * 100.0);
+    publishSnapshot();
+}
+
+void AnalyzerEngine::publishSnapshot()
+{
+    auto snapshot = std::make_shared<const AnalysisSnapshot>(workerResult);
+    std::atomic_store_explicit(&publishedSnapshot, std::move(snapshot), std::memory_order_release);
+    sendChangeMessage();
 }
 
 void AnalyzerEngine::addToScopeFifo(const float* data, int numSamples)
 {
-    int start1, size1, start2, size2;
+    int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
     scopeFifo.prepareToWrite(numSamples, start1, size1, start2, size2);
-    
-    if (size1 > 0) std::copy(data, data + size1, scopeData.begin() + start1);
-    if (size2 > 0) std::copy(data + size1, data + size1 + size2, scopeData.begin() + start2);
-    
+    if (size1 > 0)
+        std::copy(data, data + size1, scopeData.begin() + start1);
+    if (size2 > 0)
+        std::copy(data + size1, data + size1 + size2, scopeData.begin() + start2);
     scopeFifo.finishedWrite(size1 + size2);
 }
 
 int AnalyzerEngine::readFromScopeFifo(float* dest, int numSamples)
 {
-    int start1, size1, start2, size2;
+    int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
     scopeFifo.prepareToRead(numSamples, start1, size1, start2, size2);
-    
-    if (size1 > 0) std::copy(scopeData.begin() + start1, scopeData.begin() + start1 + size1, dest);
-    if (size2 > 0) std::copy(scopeData.begin() + start2, scopeData.begin() + start2 + size2, dest + size1);
-    
+    if (size1 > 0)
+        std::copy(scopeData.begin() + start1, scopeData.begin() + start1 + size1, dest);
+    if (size2 > 0)
+        std::copy(scopeData.begin() + start2, scopeData.begin() + start2 + size2, dest + size1);
     scopeFifo.finishedRead(size1 + size2);
     return size1 + size2;
 }

@@ -79,8 +79,11 @@ cmake --preset vs2026 -DFETCHCONTENT_SOURCE_DIR_JUCE=C:/path/to/JUCE
 The build system and core audio/plugin lifecycle have been stabilised. Hosted
 mono and stereo effects are prepared with the active device sample rate and
 block size, and their processed signal is returned to the audio device.
-The Linear, Harmonic, Oscilloscope, and Performance measurement paths are still
-being calibrated.
+Analysis samples now cross a fixed-capacity FIFO into a dedicated worker thread;
+FFT, THD, dynamics, and performance aggregation do not run in the audio
+callback. The UI reads immutable result snapshots and live parameters cross the
+audio boundary atomically. The Linear, Harmonic, Oscilloscope, and Performance
+measurement paths are still being calibrated.
 THD Sweep, IMD, Hammerstein, White Noise, Sine Sweep, and Dynamics should
 currently be treated as experimental and their results should not yet be used
 as calibrated measurements.

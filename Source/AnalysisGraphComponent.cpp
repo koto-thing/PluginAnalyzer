@@ -52,21 +52,22 @@ void AnalysisGraphComponent::paint(juce::Graphics& g) {
     drawGrid(g);
     
 	// 位相/振幅スペクトルを描画
+    const auto snapshot = analyzer.getAnalysisSnapshot();
     if (showPhase) {
-        const auto& spectrumR = analyzer.getPhaseSpectrumR();
+        const auto& spectrumR = snapshot->phaseSpectrumR;
         if (!spectrumR.empty())
             drawCurve(g, spectrumR, juce::Colour(0xffff6b35), -juce::MathConstants<float>::pi, juce::MathConstants<float>::pi);
 
-        const auto& spectrumL = analyzer.getPhaseSpectrumL();
+        const auto& spectrumL = snapshot->phaseSpectrumL;
         if (!spectrumL.empty())
             drawCurve(g, spectrumL, curveColour, -juce::MathConstants<float>::pi, juce::MathConstants<float>::pi);
     }
     else {
-        const auto& spectrumR = analyzer.getMagnitudeSpectrumR();
+        const auto& spectrumR = snapshot->magnitudeSpectrumR;
         if (!spectrumR.empty())
             drawCurve(g, spectrumR, juce::Colour(0xffff6b35), -100.0f, 20.0f);
 
-        const auto& spectrumL = analyzer.getMagnitudeSpectrumL();
+        const auto& spectrumL = snapshot->magnitudeSpectrumL;
         if (!spectrumL.empty())
             drawCurve(g, spectrumL, curveColour, -100.0f, 20.0f);
     }
