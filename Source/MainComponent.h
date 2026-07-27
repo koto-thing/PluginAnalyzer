@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "Application/AnalysisSession.h"
 #include "AnalyzerEngine.h"
 #include "AnalysisGraphComponent.h"
 #include "SSLLookAndFeel.h"
@@ -38,6 +39,8 @@ public:
 
 private:
     AnalyzerEngine engine;
+    plugin_analyzer::application::AnalysisService& analysisService { engine };
+    plugin_analyzer::application::AnalysisSession analysisSession { analysisService };
     juce::AudioBuffer<float> audioWorkBuffer;
     int preparedAudioBlockSize = 0;
     int preparedOutputChannels = 0;
@@ -81,8 +84,12 @@ private:
     juce::Label cpuUsageLabel;
     
     std::unique_ptr<juce::FileChooser> fileChooser;
+    std::unique_ptr<juce::PropertiesFile> properties;
 
     void showPluginLoadError();
+    void loadPersistentSettings();
+    void savePersistentSettings();
+    void updateModeControls(const plugin_analyzer::application::ModeControls& controls);
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

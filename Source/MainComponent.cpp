@@ -3,14 +3,17 @@
 #include "AnalysisGraphComponent.h"
 #include "PluginScannerComponent.h"
 
+/**
+ * @brief メイン画面を初期化
+ */
 MainComponent::MainComponent()
 {
 	// ルックアンドフィール設定
     setLookAndFeel(&sslLookAndFeel);
     
 	// ビューコンポーネント作成
-    graphComponent = std::make_unique<AnalysisGraphComponent>(engine);
-    scopeComponent = std::make_unique<OscilloscopeComponent>(engine);
+    graphComponent = std::make_unique<AnalysisGraphComponent>(analysisService);
+    scopeComponent = std::make_unique<OscilloscopeComponent>(analysisService);
     
     addAndMakeVisible(tabs);
     tabs.addTab("LinearAnalysis", juce::Colours::darkgrey, 0);
@@ -56,10 +59,13 @@ MainComponent::MainComponent()
     browserButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff2d2d2d));
     browserButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
     
-    // 現在の設定を初期化
-    currentSettings.bufferSize = 512;
-    currentSettings.sampleRate = 48000.0;
-    currentSettings.fftOrder = 11;
+    juce::PropertiesFile::Options propertyOptions;
+    propertyOptions.applicationName = "PluginAnalyzer";
+    propertyOptions.filenameSuffix = "settings";
+    propertyOptions.folderName = "PluginAnalyzer";
+    propertyOptions.osxLibrarySubFolder = "Application Support";
+    properties = std::make_unique<juce::PropertiesFile>(propertyOptions);
+    loadPersistentSettings();
     
     // THD
     addAndMakeVisible(amplitudeSlider);
@@ -68,7 +74,7 @@ MainComponent::MainComponent()
     amplitudeSlider.setSliderStyle(juce::Slider::LinearHorizontal);
     amplitudeSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 60, 20);
     amplitudeSlider.onValueChange = [this] {
-        engine.setInputAmplitude((float)amplitudeSlider.getValue());
+        analysisService.setInputAmplitude((float)amplitudeSlider.getValue());
     };
     
     addAndMakeVisible(amplitudeLabel);
@@ -83,7 +89,7 @@ MainComponent::MainComponent()
     frequencySlider.setSliderStyle(juce::Slider::LinearHorizontal);
     frequencySlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 80, 20);
     frequencySlider.onValueChange = [this] {
-        engine.setTestFrequency(frequencySlider.getValue());
+        analysisService.setTestFrequency(frequencySlider.getValue());
     };
     
     addAndMakeVisible(frequencyLabel);
@@ -142,15 +148,24 @@ MainComponent::MainComponent()
     currentContentComp = graphComponent.get();
 
     setSize(800, 600);
-    setAudioChannels(2, 2);
+    auto savedAudioState = properties->getXmlValue("audioDeviceState");
+    setAudioChannels(currentSettings.numInputChannels,
+                     currentSettings.numOutputChannels,
+                     savedAudioState.get());
+    engine.setFFTOrder(currentSettings.fftOrder);
+    currentTabChanged(0, tabs.getCurrentTabName());
     
     startTimer(100);
 }
 
+/**
+ * @brief UI、オーディオデバイス、永続設定を終了処理
+ */
 MainComponent::~MainComponent()
 {
     tabs.removeChangeListener(this);
     stopTimer();
+    savePersistentSettings();
     shutdownAudio();
     setLookAndFeel(nullptr);
 }
@@ -203,6 +218,9 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
     }
 }
 
+/**
+ * @brief オーディオ処理用リソースを解放
+ */
 void MainComponent::releaseResources()
 {
     engine.releaseResources();
@@ -300,6 +318,9 @@ void MainComponent::resized()
     }
 }
 
+/**
+ * @brief ファイル選択ダイアログからプラグインをロード
+ */
 void MainComponent::loadPluginClicked()
 {
 	// 対応するプラグイン形式のファイルパターンを構築
@@ -333,7 +354,10 @@ void MainComponent::loadPluginClicked()
         juce::File::getSpecialLocation(juce::File::userHomeDirectory),
         filePatterns.isEmpty() ? "*.*" : filePatterns);
 
-    auto folderChooserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
+    // VST3 bundles are files on some platforms and directories on others.
+    auto folderChooserFlags = juce::FileBrowserComponent::openMode
+                            | juce::FileBrowserComponent::canSelectFiles
+                            | juce::FileBrowserComponent::canSelectDirectories;
 
     fileChooser->launchAsync(folderChooserFlags, [this](const juce::FileChooser& fc) {
         auto file = fc.getResult();
@@ -351,6 +375,9 @@ void MainComponent::loadPluginClicked()
     });
 }
 
+/**
+ * @brief 直近のプラグイン読み込みエラーを表示
+ */
 void MainComponent::showPluginLoadError()
 {
     auto message = engine.getLastPluginError();
@@ -367,10 +394,13 @@ void MainComponent::showPluginLoadError()
  */
 void MainComponent::timerCallback()
 {
-    const auto snapshot = engine.getAnalysisSnapshot();
+    const auto snapshot = analysisService.getAnalysisSnapshot();
+    if (graphComponent != nullptr)
+        graphComponent->repaint();
+
 	// THD/IMD表示の更新
     juce::String thdText;
-    if (engine.getAnalysisMode() == AnalyzerEngine::AnalysisMode::IMD)
+    if (analysisService.getAnalysisMode() == plugin_analyzer::domain::AnalysisMode::IMD)
         thdText = "IMD: " + juce::String(snapshot->imd, 3) + "%";
     else
         thdText = juce::String(snapshot->thd, 3) + "% (THD+N: "
@@ -439,44 +469,11 @@ void MainComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
  */
 void MainComponent::currentTabChanged(int newCurrentTabIndex, const juce::String& /*newCurrentTabName*/)
 {
-    juce::Component* newContent = nullptr;
-    
-    // デフォ
-    newContent = graphComponent.get(); 
-    
-    switch (newCurrentTabIndex)
-    {
-        case 0: // LinearAnalysis
-            engine.setAnalysisMode(AnalyzerEngine::AnalysisMode::Linear);
-            break;
-        case 1: // HarmonicAnalysis
-            engine.setAnalysisMode(AnalyzerEngine::AnalysisMode::Harmonic);
-            break;
-        case 2: // THD Sweep
-            engine.setAnalysisMode(AnalyzerEngine::AnalysisMode::THDSweep);
-            break;
-        case 3: // IMD
-            engine.setAnalysisMode(AnalyzerEngine::AnalysisMode::IMD);
-            break;
-        case 4: // Hammerstein
-            engine.setAnalysisMode(AnalyzerEngine::AnalysisMode::Hammerstein);
-            break;
-        case 5: // WhiteNoise
-            engine.setAnalysisMode(AnalyzerEngine::AnalysisMode::WhiteNoise);
-            break;
-        case 6: // SineSweep
-            engine.setAnalysisMode(AnalyzerEngine::AnalysisMode::SineSweep);
-            break;
-        case 7: // Oscilloscope
-            newContent = scopeComponent.get();
-            break;
-        case 8: // Dynamics
-            engine.setAnalysisMode(AnalyzerEngine::AnalysisMode::Dynamics);
-            break;
-        case 9: // Performance
-            engine.setAnalysisMode(AnalyzerEngine::AnalysisMode::Performance);
-            break;
-    }
+    const auto selection = analysisSession.selectTab(newCurrentTabIndex);
+    auto* newContent = selection.content
+                         == plugin_analyzer::application::ContentView::Oscilloscope
+                     ? static_cast<juce::Component*>(scopeComponent.get())
+                     : static_cast<juce::Component*>(graphComponent.get());
 
     if (currentContentComp != newContent)
     {
@@ -485,6 +482,7 @@ void MainComponent::currentTabChanged(int newCurrentTabIndex, const juce::String
         addAndMakeVisible(currentContentComp);
         resized();
     }
+    updateModeControls(selection.controls);
 }
 
 /**
@@ -492,7 +490,7 @@ void MainComponent::currentTabChanged(int newCurrentTabIndex, const juce::String
  */
 void MainComponent::showSettingsDialog()
 {
-    auto* settingsComp = new SettingsComponent(currentSettings);
+    auto* settingsComp = new SettingsComponent(currentSettings, deviceManager);
     settingsComp->onSettingsChanged = [this](const SettingsComponent::Settings& newSettings) {
         applySettings(newSettings);
     };
@@ -507,7 +505,7 @@ void MainComponent::showSettingsDialog()
     
     auto* dialog = options.launchAsync();
     if (dialog != nullptr)
-        dialog->centreWithSize(500, 450);
+        dialog->centreWithSize(620, 690);
 }
 
 /**
@@ -516,39 +514,9 @@ void MainComponent::showSettingsDialog()
  */
 void MainComponent::applySettings(const SettingsComponent::Settings& newSettings)
 {
-	// オーディオをシャットダウン
-    shutdownAudio();
-    
-	// 新しい設定を保存
     currentSettings = newSettings;
-    
-	// エンジンに新しい設定を適用
     engine.setFFTOrder(newSettings.fftOrder);
-    
-	// オーディオチャネルを再設定
-    setAudioChannels(newSettings.numInputChannels, newSettings.numOutputChannels, nullptr);
-
-    auto setup = deviceManager.getAudioDeviceSetup();
-    setup.sampleRate = newSettings.sampleRate;
-    setup.bufferSize = newSettings.bufferSize;
-    const auto deviceError = deviceManager.setAudioDeviceSetup(setup, true);
-
-    if (deviceError.isNotEmpty())
-    {
-        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
-                                               "Audio Settings Failed",
-                                               deviceError);
-    }
-    else
-    {
-        const auto activeSetup = deviceManager.getAudioDeviceSetup();
-        currentSettings.sampleRate = activeSetup.sampleRate;
-        currentSettings.bufferSize = activeSetup.bufferSize;
-    }
-    
-    DBG("Settings applied: BufferSize=" << newSettings.bufferSize 
-        << ", SampleRate=" << newSettings.sampleRate 
-        << ", FFTOrder=" << newSettings.fftOrder);
+    savePersistentSettings();
 }
 
 /**
@@ -556,12 +524,9 @@ void MainComponent::applySettings(const SettingsComponent::Settings& newSettings
  */
 void MainComponent::showPluginBrowser()
 {
-    auto* browserComp = new PluginScannerComponent(currentSettings.pluginScanPaths);
+    auto* browserComp = new PluginScannerComponent(currentSettings.pluginScanPaths, *properties);
     browserComp->onPluginSelected = [this](const juce::PluginDescription& desc) {
-		// プラグインをロード
-        juce::File pluginFile(desc.fileOrIdentifier);
-        
-        if (pluginFile.exists() && engine.loadPlugin(pluginFile))
+        if (engine.loadPlugin(desc))
         {
             pluginNameLabel.setText(engine.getPluginName(), juce::dontSendNotification);
             
@@ -589,4 +554,68 @@ void MainComponent::showPluginBrowser()
     auto* dialog = options.launchAsync();
     if (dialog != nullptr)
         dialog->centreWithSize(600, 500);
+}
+
+/**
+ * @brief 永続ストレージからアプリケーション設定を読み込む
+ */
+void MainComponent::loadPersistentSettings()
+{
+    currentSettings.bufferSize = properties->getIntValue("bufferSize", 512);
+    currentSettings.sampleRate = properties->getDoubleValue("sampleRate", 48000.0);
+    currentSettings.fftOrder = properties->getIntValue("fftOrder", 11);
+    currentSettings.numInputChannels = properties->getIntValue("inputChannels", 2);
+    currentSettings.numOutputChannels = properties->getIntValue("outputChannels", 2);
+    currentSettings.audioDeviceName = properties->getValue("audioDeviceName");
+    currentSettings.pluginScanPaths.addTokens(properties->getValue("pluginScanPaths"),
+                                              "\n", {});
+    currentSettings.pluginScanPaths.removeEmptyStrings();
+}
+
+/**
+ * @brief 現在のアプリケーション設定を永続ストレージへ保存
+ */
+void MainComponent::savePersistentSettings()
+{
+    if (properties == nullptr)
+        return;
+
+    if (auto state = deviceManager.createStateXml())
+        properties->setValue("audioDeviceState", state.get());
+    const auto setup = deviceManager.getAudioDeviceSetup();
+    currentSettings.sampleRate = setup.sampleRate;
+    currentSettings.bufferSize = setup.bufferSize;
+    currentSettings.audioDeviceName = setup.outputDeviceName;
+    properties->setValue("sampleRate", currentSettings.sampleRate);
+    properties->setValue("bufferSize", currentSettings.bufferSize);
+    properties->setValue("audioDeviceName", currentSettings.audioDeviceName);
+    properties->setValue("fftOrder", currentSettings.fftOrder);
+    properties->setValue("inputChannels", currentSettings.numInputChannels);
+    properties->setValue("outputChannels", currentSettings.numOutputChannels);
+    properties->setValue("pluginScanPaths", currentSettings.pluginScanPaths.joinIntoString("\n"));
+    properties->saveIfNeeded();
+}
+
+/**
+ * @brief 解析モードに応じて操作コントロールの表示状態を更新
+ * @param controls 各コントロールの表示設定
+ */
+void MainComponent::updateModeControls(
+    const plugin_analyzer::application::ModeControls& controls)
+{
+    amplitudeSlider.setVisible(controls.amplitude);
+    amplitudeLabel.setVisible(controls.amplitude);
+    frequencySlider.setVisible(controls.frequency);
+    frequencyLabel.setVisible(controls.frequency);
+    thdLabel.setVisible(controls.distortion);
+    thdValueLabel.setVisible(controls.distortion);
+    dynamicsLabel.setVisible(controls.dynamics);
+    compressionRatioLabel.setVisible(controls.dynamics);
+    envelopeLabel.setVisible(controls.dynamics);
+    attackTimeLabel.setVisible(controls.dynamics);
+    performanceLabel.setVisible(controls.performance);
+    avgProcessingTimeLabel.setVisible(controls.performance);
+    peakProcessingTimeLabel.setVisible(controls.performance);
+    cpuUsageLabel.setVisible(controls.performance);
+    showPhaseButton.setVisible(controls.phase);
 }

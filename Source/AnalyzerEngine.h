@@ -1,79 +1,21 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "Application/AnalysisService.h"
 #include "TestSignalGenerator.h"
 #include <array>
 #include <atomic>
 #include <memory>
 
-class AnalyzerEngine : public juce::ChangeBroadcaster,
+class AnalyzerEngine : public plugin_analyzer::application::AnalysisService,
                        private juce::Thread
 {
 public:
-    enum class AnalysisMode
-    {
-        Linear,
-        Harmonic,
-        Hammerstein,
-        WhiteNoise,
-        SineSweep,
-        THDSweep,
-        IMD,
-        Dynamics,
-        Performance
-    };
-
-    struct DynamicsData
-    {
-        std::vector<float> inputLevels;
-        std::vector<float> outputLevels;
-        float compressionRatio = 1.0f;
-        float threshold = 0.0f;
-    };
-
-    struct EnvelopeData
-    {
-        std::vector<float> timePoints;
-        std::vector<float> envelopeValues;
-        float attackTime = 0.0f;
-        float releaseTime = 0.0f;
-    };
-
-    struct PerformanceData
-    {
-        float averageProcessingTime = 0.0f;
-        float peakProcessingTime = 0.0f;
-        float p95ProcessingTime = 0.0f;
-        float p99ProcessingTime = 0.0f;
-        float cpuUsagePercent = 0.0f;
-        int bufferSize = 0;
-        double sampleRate = 0.0;
-        uint64_t droppedAnalysisSamples = 0;
-        uint64_t droppedScopeSamples = 0;
-        uint64_t droppedPerformanceRecords = 0;
-        std::vector<float> processingTimeHistory;
-    };
-
-    // An instance is never mutated after publication. UI code keeps this shared
-    // pointer for the complete paint/timer operation.
-    struct AnalysisSnapshot
-    {
-        std::vector<float> magnitudeSpectrumL;
-        std::vector<float> magnitudeSpectrumR;
-        std::vector<float> phaseSpectrumL;
-        std::vector<float> phaseSpectrumR;
-        std::vector<float> harmonicLevels;
-        std::vector<float> thdSweepFrequencies;
-        std::vector<float> thdSweepValues;
-        DynamicsData dynamics;
-        EnvelopeData envelope;
-        PerformanceData performance;
-        float thd = 0.0f;
-        float thdPlusN = 0.0f;
-        float imd = 0.0f;
-        int latencySamples = 0;
-        double sampleRate = 44100.0;
-    };
+    using AnalysisMode = plugin_analyzer::domain::AnalysisMode;
+    using DynamicsData = plugin_analyzer::domain::DynamicsData;
+    using EnvelopeData = plugin_analyzer::domain::EnvelopeData;
+    using PerformanceData = plugin_analyzer::domain::PerformanceData;
+    using AnalysisSnapshot = plugin_analyzer::domain::AnalysisSnapshot;
 
     AnalyzerEngine();
     ~AnalyzerEngine() override;
@@ -87,28 +29,33 @@ public:
     int getFFTSize() const { return 1 << getFFTOrder(); }
 
     bool loadPlugin(const juce::File& file);
+    bool loadPlugin(const juce::PluginDescription& description);
+    // Also used by the Phase 6 calibration suite to host deterministic
+    // in-process processors without depending on an installed plug-in format.
+    bool loadProcessor(std::unique_ptr<juce::AudioProcessor> processor);
     void unloadPlugin();
     juce::String getPluginName() const;
+    std::string getPluginDisplayName() const override;
     juce::String getLastPluginError() const;
 
-    void setAnalysisMode(AnalysisMode mode);
-    AnalysisMode getAnalysisMode() const
+    void setAnalysisMode(AnalysisMode mode) override;
+    AnalysisMode getAnalysisMode() const override
     {
         return requestedMode.load(std::memory_order_relaxed);
     }
 
-    void setInputAmplitude(float amplitude);
+    void setInputAmplitude(float amplitude) override;
     float getInputAmplitude() const { return requestedAmplitude.load(std::memory_order_relaxed); }
-    void setTestFrequency(double frequency);
+    void setTestFrequency(double frequency) override;
     double getTestFrequency() const { return requestedFrequency.load(std::memory_order_relaxed); }
 
-    std::shared_ptr<const AnalysisSnapshot> getAnalysisSnapshot() const;
+    std::shared_ptr<const AnalysisSnapshot> getAnalysisSnapshot() const override;
 
     void processAudio(juce::AudioBuffer<float>& buffer);
     void triggerImpulseAnalysis();
 
     void addToScopeFifo(const float* data, int numSamples);
-    int readFromScopeFifo(float* dest, int numSamples);
+    int readFromScopeFifo(float* dest, int numSamples) override;
 
     enum { scopeFifoSize = 32768 };
 
@@ -149,7 +96,7 @@ private:
     void updatePerformanceMetrics(const PerformanceRecord& record);
     void resizeAudioBuffers(int blockSize);
 
-    std::unique_ptr<juce::AudioPluginInstance> pluginInstance;
+    std::unique_ptr<juce::AudioProcessor> pluginInstance;
     juce::AudioPluginFormatManager formatManager;
     mutable juce::CriticalSection pluginLock;
     juce::AudioBuffer<float> pluginProcessingBuffer;

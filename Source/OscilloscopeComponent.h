@@ -1,23 +1,36 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include "AnalyzerEngine.h"
+#include "Application/AnalysisService.h"
 
 class OscilloscopeComponent : public juce::Component,
                               public juce::Timer
 {
 public:
-    OscilloscopeComponent(AnalyzerEngine& engine) : analyzer(engine)
+    /**
+     * @brief オシロスコープコンポーネントを作成
+     * @param service 波形サンプルの取得に使用するサービス
+     */
+    explicit OscilloscopeComponent(
+        plugin_analyzer::application::AnalysisService& service)
+        : analysisService(service)
     {
         startTimerHz(60);
         plotBuffer.resize(2048, 0.0f);
     }
 
+    /**
+     * @brief 更新タイマーを停止してコンポーネントを破棄
+     */
     ~OscilloscopeComponent() override
     {
         stopTimer();
     }
 
+    /**
+     * @brief 現在の波形を描画
+     * @param g グラフィックスコンテキスト
+     */
     void paint(juce::Graphics& g) override
     {
         // 背景
@@ -60,10 +73,13 @@ public:
         g.strokePath(p, juce::PathStrokeType(2.0f));
     }
 
+    /**
+     * @brief FIFOから新しい波形サンプルを取得
+     */
     void timerCallback() override
     {
 
-        int numToRead = analyzer.readFromScopeFifo(tempBuffer.data(), 1024);
+        int numToRead = analysisService.readFromScopeFifo(tempBuffer.data(), 1024);
         
         if (numToRead > 0)
         {
@@ -85,7 +101,7 @@ public:
     }
 
 private:
-    AnalyzerEngine& analyzer;
+    plugin_analyzer::application::AnalysisService& analysisService;
     std::vector<float> plotBuffer;
     std::array<float, 2048> tempBuffer;
 

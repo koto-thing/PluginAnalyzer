@@ -7,17 +7,34 @@ namespace
 constexpr double imdLowFrequency = 250.0;
 constexpr double imdHighFrequency = 8000.0;
 
+/**
+ * @brief 
+ * @param mode
+ * @return 
+ */
 bool modeRunsContinuously(AnalyzerEngine::AnalysisMode mode)
 {
     return mode != AnalyzerEngine::AnalysisMode::Linear;
 }
 
+/**
+ * @brief
+ * @param mode
+ * @return
+ */
 bool modeUsesWindow(AnalyzerEngine::AnalysisMode mode)
 {
     return mode != AnalyzerEngine::AnalysisMode::Linear
         && mode != AnalyzerEngine::AnalysisMode::Performance;
 }
 
+/**
+ * @brief 
+ * @param frequency
+ * @param sampleRate
+ * @param fftSize
+ * @return 
+ */
 double quantiseToFFTBin(double frequency, double sampleRate, int fftSize)
 {
     const auto bin = juce::jlimit(1, fftSize / 2 - 1,
@@ -25,6 +42,12 @@ double quantiseToFFTBin(double frequency, double sampleRate, int fftSize)
     return bin * sampleRate / fftSize;
 }
 
+/**
+ * @brief 
+ * @param sortedValues
+ * @param proportion
+ * @return 
+ */
 float percentile(const std::vector<float>& sortedValues, double proportion)
 {
     if (sortedValues.empty())
@@ -69,6 +92,10 @@ AnalyzerEngine::~AnalyzerEngine()
     unloadPlugin();
 }
 
+/**
+ * @brief
+ * @param order
+ */
 void AnalyzerEngine::configureWorkerFFT(int order)
 {
     workerFFTOrder = juce::jlimit(8, 15, order);
@@ -93,12 +120,21 @@ void AnalyzerEngine::configureWorkerFFT(int order)
     spectralAverageCount = 0;
 }
 
+/**
+ * @brief
+ * @param blockSize
+ */
 void AnalyzerEngine::resizeAudioBuffers(int blockSize)
 {
     pluginProcessingBuffer.setSize(juce::jmax(pluginInputChannels, pluginOutputChannels),
                                    blockSize, false, true, false);
 }
 
+/**
+ * @brief
+ * @param sampleRate
+ * @param blockSize
+ */
 void AnalyzerEngine::prepare(double sampleRate, int blockSize)
 {
     jassert(sampleRate > 0.0 && blockSize > 0);
@@ -122,6 +158,9 @@ void AnalyzerEngine::prepare(double sampleRate, int blockSize)
     notify();
 }
 
+/**
+ * @brief  
+ */
 void AnalyzerEngine::releaseResources()
 {
     const juce::ScopedLock lock(pluginLock);
@@ -132,12 +171,20 @@ void AnalyzerEngine::releaseResources()
     }
 }
 
+/**
+ * @brief
+ * @param newBlockSize
+ */
 void AnalyzerEngine::setBlockSize(int newBlockSize)
 {
     if (newBlockSize > 0)
         activeBlockSize.store(newBlockSize, std::memory_order_release);
 }
 
+/**
+ * @brief
+ * @param order
+ */
 void AnalyzerEngine::setFFTOrder(int order)
 {
     if (order < 8 || order > 15)
@@ -147,6 +194,11 @@ void AnalyzerEngine::setFFTOrder(int order)
     notify();
 }
 
+/**
+ * @brief 
+ * @param file
+ * @return
+ */
 bool AnalyzerEngine::loadPlugin(const juce::File& file)
 {
     if (!file.exists())
@@ -167,10 +219,20 @@ bool AnalyzerEngine::loadPlugin(const juce::File& file)
         return false;
     }
 
+    return loadPlugin(*found[0]);
+}
+
+/**
+ * @brief 
+ * @param description
+ * @return
+ */
+bool AnalyzerEngine::loadPlugin(const juce::PluginDescription& description)
+{
     juce::String error;
     const auto sampleRate = activeSampleRate.load(std::memory_order_acquire);
     const auto blockSize = activeBlockSize.load(std::memory_order_acquire);
-    auto candidate = formatManager.createPluginInstance(*found[0], sampleRate, blockSize, error);
+    auto candidate = formatManager.createPluginInstance(description, sampleRate, blockSize, error);
     if (!candidate)
     {
         const juce::ScopedLock lock(pluginLock);
@@ -178,6 +240,25 @@ bool AnalyzerEngine::loadPlugin(const juce::File& file)
         return false;
     }
 
+    return loadProcessor(std::move(candidate));
+}
+
+/**
+ * @brief
+ * @param candidate
+ * @return
+ */
+bool AnalyzerEngine::loadProcessor(std::unique_ptr<juce::AudioProcessor> candidate)
+{
+    if (!candidate)
+    {
+        const juce::ScopedLock lock(pluginLock);
+        lastPluginError = "The processor instance is null.";
+        return false;
+    }
+
+    const auto sampleRate = activeSampleRate.load(std::memory_order_acquire);
+    const auto blockSize = activeBlockSize.load(std::memory_order_acquire);
     const auto inputs = candidate->getTotalNumInputChannels();
     const auto outputs = candidate->getTotalNumOutputChannels();
     if (inputs < 1 || inputs > 2 || outputs < 1 || outputs > 2)
@@ -209,10 +290,12 @@ bool AnalyzerEngine::loadPlugin(const juce::File& file)
         lastPluginError.clear();
     }
     triggerImpulseAnalysis();
-    sendChangeMessage();
     return true;
 }
 
+/**
+ * @brief 
+ */
 void AnalyzerEngine::unloadPlugin()
 {
     {
@@ -226,37 +309,68 @@ void AnalyzerEngine::unloadPlugin()
         pluginIsPrepared = false;
         lastPluginError.clear();
     }
-    sendChangeMessage();
 }
 
+/**
+ * @brief
+ * @return
+ */
 juce::String AnalyzerEngine::getPluginName() const
 {
     const juce::ScopedLock lock(pluginLock);
     return pluginInstance ? pluginInstance->getName() : "No Plugin Loaded";
 }
 
+/**
+ * @brief UI表示用のプラグイン名を標準文字列で取得
+ * @return ロード中のプラグイン名
+ */
+std::string AnalyzerEngine::getPluginDisplayName() const
+{
+    return getPluginName().toStdString();
+}
+
+/**
+ * @brief
+ * @return
+ */
 juce::String AnalyzerEngine::getLastPluginError() const
 {
     const juce::ScopedLock lock(pluginLock);
     return lastPluginError;
 }
 
+/**
+ * @brief 
+ */
 void AnalyzerEngine::triggerImpulseAnalysis()
 {
     requestedGeneration.fetch_add(1, std::memory_order_acq_rel);
 }
 
+/**
+ * @brief
+ * @param mode
+ */
 void AnalyzerEngine::setAnalysisMode(AnalysisMode mode)
 {
     if (requestedMode.exchange(mode, std::memory_order_acq_rel) != mode)
         triggerImpulseAnalysis();
 }
 
+/**
+ * @brief 
+ * @param amplitude
+ */
 void AnalyzerEngine::setInputAmplitude(float amplitude)
 {
     requestedAmplitude.store(juce::jlimit(0.0f, 1.0f, amplitude), std::memory_order_release);
 }
 
+/**
+ * @brief 
+ * @param frequency
+ */
 void AnalyzerEngine::setTestFrequency(double frequency)
 {
     const auto clamped = juce::jlimit(20.0, 20000.0, frequency);
@@ -264,11 +378,19 @@ void AnalyzerEngine::setTestFrequency(double frequency)
         triggerImpulseAnalysis();
 }
 
+/**
+ * @brief
+ * @return
+ */
 std::shared_ptr<const AnalyzerEngine::AnalysisSnapshot> AnalyzerEngine::getAnalysisSnapshot() const
 {
     return std::atomic_load_explicit(&publishedSnapshot, std::memory_order_acquire);
 }
 
+/**
+ * @brief
+ * @param buffer
+ */
 void AnalyzerEngine::processAudio(juce::AudioBuffer<float>& buffer)
 {
     const auto numSamples = buffer.getNumSamples();
@@ -428,6 +550,9 @@ void AnalyzerEngine::processAudio(juce::AudioBuffer<float>& buffer)
     notify();
 }
 
+/**
+ * @brief
+ */
 void AnalyzerEngine::run()
 {
     while (!threadShouldExit())
@@ -440,6 +565,9 @@ void AnalyzerEngine::run()
     drainPerformanceFifo();
 }
 
+/**
+ * @brief
+ */
 void AnalyzerEngine::drainAnalysisFifo()
 {
     for (;;)
@@ -454,6 +582,11 @@ void AnalyzerEngine::drainAnalysisFifo()
     }
 }
 
+/**
+ * @brief
+ * @param samples
+ * @param count
+ */
 void AnalyzerEngine::processAnalysisSamples(const AnalysisSample* samples, int count)
 {
     for (int i = 0; i < count; ++i)
@@ -466,6 +599,13 @@ void AnalyzerEngine::processAnalysisSamples(const AnalysisSample* samples, int c
                 configureWorkerFFT(desiredOrder);
             resetWorkerAnalysis(sample.generation);
         }
+
+        // A producer may enqueue more than one FFT frame before the worker
+        // publishes completion. Only the first frame contains the impulse;
+        // later frames are silence and must not overwrite the valid transfer.
+        if (sample.mode == AnalysisMode::Linear
+            && completedLinearGeneration.load(std::memory_order_acquire) == sample.generation)
+            continue;
 
         if (sample.mode == AnalysisMode::Dynamics)
             analyzeDynamicsSample(sample.input, sample.outputL);
@@ -484,6 +624,10 @@ void AnalyzerEngine::processAnalysisSamples(const AnalysisSample* samples, int c
     }
 }
 
+/**
+ * @brief
+ * @param generation
+ */
 void AnalyzerEngine::resetWorkerAnalysis(uint32_t generation)
 {
     workerGeneration = generation;
@@ -510,6 +654,10 @@ void AnalyzerEngine::resetWorkerAnalysis(uint32_t generation)
     envelopePrevious = 0.0f;
 }
 
+/**
+ * @brief
+ * @param mode
+ */
 void AnalyzerEngine::processCompletedFFT(AnalysisMode mode)
 {
     std::fill(complexInput.begin(), complexInput.end(), 0.0f);
@@ -673,6 +821,10 @@ void AnalyzerEngine::processCompletedFFT(AnalysisMode mode)
         completedLinearGeneration.store(workerGeneration, std::memory_order_release);
 }
 
+/**
+ * @brief
+ * @param result
+ */
 void AnalyzerEngine::calculateTHD(AnalysisSnapshot& result)
 {
     const auto binWidth = result.sampleRate / workerFFTSize;
@@ -736,6 +888,10 @@ void AnalyzerEngine::calculateTHD(AnalysisSnapshot& result)
         std::sqrt(noiseSquared / fundamentalPower) * 100.0);
 }
 
+/**
+ * @brief
+ * @param result
+ */
 void AnalyzerEngine::calculateIMD(AnalysisSnapshot& result)
 {
     const auto binWidth = result.sampleRate / workerFFTSize;
@@ -774,6 +930,11 @@ void AnalyzerEngine::calculateIMD(AnalysisSnapshot& result)
     result.imd = static_cast<float>(std::sqrt(productsPower / carrierPower) * 100.0);
 }
 
+/**
+ * @brief
+ * @param input
+ * @param output
+ */
 void AnalyzerEngine::analyzeDynamicsSample(float input, float output)
 {
     // RMS windows reject the test tone phase and produce a stable static curve.
@@ -840,6 +1001,10 @@ void AnalyzerEngine::analyzeDynamicsSample(float input, float output)
     }
 }
 
+/**
+ * @brief
+ * @param output
+ */
 void AnalyzerEngine::analyzeEnvelopeSample(float output)
 {
     static constexpr int decimation = 32;
@@ -896,6 +1061,11 @@ void AnalyzerEngine::analyzeEnvelopeSample(float output)
     }
 }
 
+/**
+ * @brief
+ * @param frequency
+ * @param thd
+ */
 void AnalyzerEngine::updateTHDSweep(float frequency, float thd)
 {
     auto& frequencies = workerResult.thdSweepFrequencies;
@@ -916,6 +1086,9 @@ void AnalyzerEngine::updateTHDSweep(float frequency, float thd)
     }
 }
 
+/**
+ * @brief
+ */
 void AnalyzerEngine::drainPerformanceFifo()
 {
     for (;;)
@@ -932,6 +1105,10 @@ void AnalyzerEngine::drainPerformanceFifo()
     }
 }
 
+/**
+ * @brief
+ * @param record
+ */
 void AnalyzerEngine::updatePerformanceMetrics(const PerformanceRecord& record)
 {
     performanceHistory[static_cast<size_t>(performanceHistoryWrite)] = record.processingTimeMs;
@@ -970,6 +1147,9 @@ void AnalyzerEngine::updatePerformanceMetrics(const PerformanceRecord& record)
     publishSnapshot();
 }
 
+/**
+ * @brief
+ */
 void AnalyzerEngine::publishSnapshot()
 {
     workerResult.performance.droppedAnalysisSamples =
@@ -980,9 +1160,13 @@ void AnalyzerEngine::publishSnapshot()
         droppedPerformanceRecords.load(std::memory_order_relaxed);
     auto snapshot = std::make_shared<const AnalysisSnapshot>(workerResult);
     std::atomic_store_explicit(&publishedSnapshot, std::move(snapshot), std::memory_order_release);
-    sendChangeMessage();
 }
 
+/**
+ * @brief
+ * @param data
+ * @param numSamples
+ */
 void AnalyzerEngine::addToScopeFifo(const float* data, int numSamples)
 {
     int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
@@ -997,6 +1181,12 @@ void AnalyzerEngine::addToScopeFifo(const float* data, int numSamples)
                                       std::memory_order_relaxed);
 }
 
+/**
+ * @brief
+ * @param dest
+ * @param numSamples
+ * @return
+ */
 int AnalyzerEngine::readFromScopeFifo(float* dest, int numSamples)
 {
     int start1 = 0, size1 = 0, start2 = 0, size2 = 0;

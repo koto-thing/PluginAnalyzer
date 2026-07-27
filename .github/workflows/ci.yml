@@ -1,0 +1,190 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 2
+
+jobs:
+  source-quality:
+    name: Source quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Check whitespace and generated files
+        shell: bash
+        run: |
+          git diff --check
+          test ! -d out
+          test ! -d build
+
+  build-test:
+    name: ${{ matrix.name }}
+    needs: source-quality
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows build and test
+            os: windows-latest
+          - name: macOS build and test
+            os: macos-latest
+          - name: Linux build and test
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            ladspa-sdk libasound2-dev libfontconfig1-dev \
+            libfreetype6-dev libgl1-mesa-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev \
+            ninja-build xvfb
+
+      - name: Configure Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >
+          cmake -S . -B build -A x64
+          -DBUILD_TESTING=ON
+          -DPLUGIN_ANALYZER_ENABLE_STRESS_TESTS=OFF
+
+      - name: Configure macOS or Linux
+        if: runner.os != 'Windows'
+        shell: bash
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TESTING=ON
+          -DPLUGIN_ANALYZER_ENABLE_STRESS_TESTS=OFF
+
+      - name: Build
+        shell: bash
+        run: cmake --build build --config Release
+
+      - name: Test
+        if: runner.os != 'Linux'
+        shell: bash
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Test under virtual display
+        if: runner.os == 'Linux'
+        shell: bash
+        run: xvfb-run -a ctest --test-dir build -C Release --output-on-failure
+
+      - name: Upload test log
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-log-${{ runner.os }}
+          path: build/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  sanitizers:
+    name: Linux ASan and UBSan
+    needs: source-quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            clang ladspa-sdk libasound2-dev libfontconfig1-dev \
+            libfreetype6-dev libgl1-mesa-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev \
+            ninja-build xvfb
+
+      - name: Configure
+        shell: bash
+        run: >
+          cmake -S . -B build-sanitized -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_CXX_FLAGS=-fsanitize=address,undefined\ -fno-omit-frame-pointer
+          -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined
+          -DBUILD_TESTING=ON
+          -DPLUGIN_ANALYZER_ENABLE_STRESS_TESTS=OFF
+
+      - name: Build tests
+        shell: bash
+        run: cmake --build build-sanitized --target PluginAnalyzerTests
+
+      - name: Run calibrated tests
+        shell: bash
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: >
+          xvfb-run -a ctest --test-dir build-sanitized
+          --output-on-failure -R PluginAnalyzer.Unit
+
+  package-smoke:
+    name: Windows package smoke
+    needs: build-test
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Configure release package
+        shell: pwsh
+        run: >
+          cmake -S . -B build-package -A x64
+          -DBUILD_TESTING=ON
+          -DPLUGIN_ANALYZER_ENABLE_STRESS_TESTS=ON
+
+      - name: Build and test
+        shell: pwsh
+        run: |
+          cmake --build build-package --config Release
+          ctest --test-dir build-package -C Release --output-on-failure
+
+      - name: Install and smoke-test installed executable
+        shell: pwsh
+        run: |
+          cmake --install build-package --config Release --prefix staging --component PluginAnalyzerApp
+          & .\staging\bin\PluginAnalyzer.exe --smoke-test
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installed application smoke test failed."
+          }

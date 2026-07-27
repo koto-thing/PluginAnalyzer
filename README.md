@@ -52,6 +52,28 @@ out/build/vs2026/PluginAnalyzer_artefacts/Debug/
 
 Use `vs2026-release` instead of `vs2026-debug` for a Release build.
 
+### Testing
+
+The Phase 6 calibration suite covers test-signal generation, FFT transfer
+measurements, THD/IMD, deterministic Gain/Delay/Clipper/Waveshaper/Compressor
+processors, processor lifecycle, FIFO ordering, every analysis mode, and a
+headless application startup/settings/shutdown smoke test.
+
+```powershell
+cmake --preset vs2026
+cmake --build --preset vs2026-debug
+ctest --preset vs2026-debug
+```
+
+An opt-in five-second quality run also checks sustained processing, dropout
+limits, peak working set, and handle count:
+
+```powershell
+cmake --preset vs2026 -DPLUGIN_ANALYZER_ENABLE_STRESS_TESTS=ON
+cmake --build --preset vs2026-release
+ctest --test-dir out/build/vs2026 -C Release -L long --output-on-failure
+```
+
 ### Building with Ninja
 
 Install Ninja and a suitable compiler environment, then run:
@@ -64,6 +86,34 @@ ctest --preset ninja-debug
 
 `PluginAnalyzer.jucer` is retained temporarily for migration compatibility.
 CMake is the authoritative build definition.
+
+### Continuous integration and releases
+
+GitHub Actions runs source-quality checks, Release builds, and CTest on Windows,
+macOS, and Linux for pull requests and pushes to `master` or `main`. Linux also
+runs the calibrated tests with AddressSanitizer and UndefinedBehaviorSanitizer.
+A Windows packaging job runs the opt-in five-second quality test and verifies
+the installed executable.
+
+Pushing a semantic-version tag matching the CMake project version creates
+Windows, macOS, and Linux packages, SHA-256 checksum files, and SPDX 2.3 SBOMs.
+The same workflow can be started manually with a version such as `v1.0.0`.
+After every platform passes, the workflow creates a draft GitHub Release. The
+`production` deployment then publishes it after any configured approval.
+
+For release approval, create a GitHub Environment named `production` and add a
+required reviewer. Code signing is optional by default; set the repository
+Actions variable `REQUIRE_CODE_SIGNING` to `true` to make missing credentials
+fail the release. Configure these repository Actions secrets as applicable:
+
+* Windows: `WINDOWS_CERTIFICATE_BASE64`, `WINDOWS_CERTIFICATE_PASSWORD`
+* macOS: `MACOS_CERTIFICATE_BASE64`, `MACOS_CERTIFICATE_PASSWORD`,
+  `MACOS_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_TEAM_ID`,
+  `APPLE_APP_PASSWORD`
+
+External Actions are pinned to full commit SHAs, and Dependabot checks them
+weekly. CI receives read-only repository access; only the final release job is
+granted `contents: write`.
 
 ### Using an existing JUCE checkout
 
@@ -87,9 +137,15 @@ function with plugin latency removed from phase. Harmonic analysis uses
 FFT-bin-aligned tones, Hann-window amplitude correction, a 20 Hz–20 kHz
 measurement band, and guarded THD/THD+N calculations. Performance results
 include average, peak, p95, and p99 processing time as well as FIFO drop counts.
-THD Sweep, IMD, Hammerstein, White Noise, Sine Sweep, and Dynamics have bounded
-measurement implementations but remain experimental until the Phase 6
-reference-processor calibration suite is complete.
+Plug-in discovery runs in the background and probes candidates in an isolated
+child process. Scan results, blacklists, paths, FFT preferences, and the active
+audio-device state persist between launches. The settings dialog controls the
+live JUCE device manager, and mode-specific controls stay out of unrelated
+analysis views. THD Sweep, IMD, Hammerstein, White Noise, Sine Sweep, and
+Dynamics have bounded measurement implementations. The Phase 6
+reference-processor suite now guards the shared signal, FFT, distortion,
+lifecycle, FIFO, and application-lifecycle paths; these modes remain marked
+experimental while broader third-party plug-in compatibility data is collected.
 
 ## Usage
 

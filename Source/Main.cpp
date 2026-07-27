@@ -1,5 +1,6 @@
 #include <JuceHeader.h>
 #include "MainComponent.h"
+#include "PluginScanIPC.h"
 
 class PluginAnalyzerApplication  : public juce::JUCEApplication
 {
@@ -13,8 +14,27 @@ public:
     /**
 	 * @brief アプリケーション初期化
      */
-    void initialise(const juce::String& /*commandLine*/) override
+    void initialise(const juce::String& commandLine) override
     {
+        if (commandLine.trim() == "--smoke-test")
+        {
+            // Headless startup/settings/shutdown coverage for CTest and release
+            // packaging checks. Do not open an audio device or native window.
+            AnalyzerEngine smokeEngine;
+            smokeEngine.prepare(48000.0, 256);
+            smokeEngine.setFFTOrder(12);
+            smokeEngine.setAnalysisMode(AnalyzerEngine::AnalysisMode::Harmonic);
+            smokeEngine.releaseResources();
+            quit();
+            return;
+        }
+
+        auto scanner = std::make_unique<PluginScanWorker>();
+        if (scanner->initialise(commandLine))
+        {
+            scannerWorker = std::move(scanner);
+            return;
+        }
         mainWindow.reset(new MainWindow(getApplicationName()));
     }
 
@@ -82,6 +102,7 @@ public:
 
 private:
     std::unique_ptr<MainWindow> mainWindow;
+    std::unique_ptr<PluginScanWorker> scannerWorker;
 };
 
 // エントリーポイント

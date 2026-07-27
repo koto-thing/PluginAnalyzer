@@ -7,24 +7,12 @@
 
 /**
  * @brief コンストラクタ
- * @param e AnalyzerEngine参照
+ * @param service 分析ユースケース境界
  */
-AnalysisGraphComponent::AnalysisGraphComponent(AnalyzerEngine& e) : analyzer(e) {
-    analyzer.addChangeListener(this);
-}
-
-/**
- * @brief デストラクタ
- */
-AnalysisGraphComponent::~AnalysisGraphComponent() {
-    analyzer.removeChangeListener(this);
-}
-
-/**
- * @brief リスナーコールバック
- */
-void AnalysisGraphComponent::changeListenerCallback(juce::ChangeBroadcaster* /*source*/) {
-    repaint();
+AnalysisGraphComponent::AnalysisGraphComponent(
+    plugin_analyzer::application::AnalysisService& service)
+    : analysisService(service)
+{
 }
 
 /**
@@ -52,7 +40,7 @@ void AnalysisGraphComponent::paint(juce::Graphics& g) {
     drawGrid(g);
     
 	// 位相/振幅スペクトルを描画
-    const auto snapshot = analyzer.getAnalysisSnapshot();
+    const auto snapshot = analysisService.getAnalysisSnapshot();
     if (showPhase) {
         const auto& spectrumR = snapshot->phaseSpectrumR;
         if (!spectrumR.empty())
@@ -73,7 +61,7 @@ void AnalysisGraphComponent::paint(juce::Graphics& g) {
     }
     
 	// プラグイン未ロード時のメッセージ表示
-    if (analyzer.getPluginName() == "No Plugin Loaded") {
+    if (analysisService.getPluginDisplayName() == "No Plugin Loaded") {
         g.setColour(juce::Colour(0xff808080));
         g.setFont(juce::Font(juce::FontOptions("Arial", 24.0f, juce::Font::bold)));
         g.drawText("Load a Plugin to Analyze", getLocalBounds(), juce::Justification::centred, true);

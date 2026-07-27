@@ -1,23 +1,28 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include "AnalyzerEngine.h"
+#include "Application/AnalysisService.h"
 
-class AnalysisGraphComponent : public juce::Component, public juce::ChangeListener
+class AnalysisGraphComponent : public juce::Component
 {
 public:
-    AnalysisGraphComponent(AnalyzerEngine& engine);
-    ~AnalysisGraphComponent() override;
+    /**
+     * @brief グラフコンポーネントを作成
+     * @param service 解析結果の取得に使用するサービス
+     */
+    explicit AnalysisGraphComponent(plugin_analyzer::application::AnalysisService& service);
 
     void paint(juce::Graphics& g) override;
     void resized() override;
-    
-    void changeListenerCallback(juce::ChangeBroadcaster* source) override;
 
+    /**
+     * @brief 位相グラフの表示状態を設定
+     * @param shouldShowPhase trueの場合は位相、falseの場合は振幅を表示
+     */
     void setShowPhase(bool shouldShowPhase) { showPhase = shouldShowPhase; repaint(); }
 
 private:
-    AnalyzerEngine& analyzer;
+    plugin_analyzer::application::AnalysisService& analysisService;
     bool showPhase = false;
 
     // ヘルパ
