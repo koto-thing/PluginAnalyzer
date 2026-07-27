@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 project(PluginAnalyzer
     VERSION 1.0.0
     DESCRIPTION "Audio plugin analysis application"
-    LANGUAGES CXX)
+    LANGUAGES C CXX)
 
 include(FetchContent)
 include(GNUInstallDirs)
