@@ -38,6 +38,9 @@ public:
 
 private:
     AnalyzerEngine engine;
+    juce::AudioBuffer<float> audioWorkBuffer;
+    int preparedAudioBlockSize = 0;
+    int preparedOutputChannels = 0;
     
     SSLLookAndFeel sslLookAndFeel;
     
@@ -78,6 +81,8 @@ private:
     juce::Label cpuUsageLabel;
     
     std::unique_ptr<juce::FileChooser> fileChooser;
+
+    void showPluginLoadError();
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

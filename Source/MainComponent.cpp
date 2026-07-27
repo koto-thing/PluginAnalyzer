@@ -11,7 +11,6 @@ MainComponent::MainComponent()
 	// ビューコンポーネント作成
     graphComponent = std::make_unique<AnalysisGraphComponent>(engine);
     scopeComponent = std::make_unique<OscilloscopeComponent>(engine);
-    engine.addChangeListener(graphComponent.get()); 
     
     addAndMakeVisible(tabs);
     tabs.addTab("LinearAnalysis", juce::Colours::darkgrey, 0);
@@ -150,8 +149,10 @@ MainComponent::MainComponent()
 
 MainComponent::~MainComponent()
 {
-    setLookAndFeel(nullptr);
+    tabs.removeChangeListener(this);
+    stopTimer();
     shutdownAudio();
+    setLookAndFeel(nullptr);
 }
 
 /**
@@ -161,11 +162,14 @@ MainComponent::~MainComponent()
  */
 void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
 {
-	// 現在の設定に基づいてエンジンを準備
-    int actualBufferSize = (currentSettings.bufferSize > 0) ? currentSettings.bufferSize : samplesPerBlockExpected;
-    double actualSampleRate = (currentSettings.sampleRate > 0) ? currentSettings.sampleRate : sampleRate;
-    
-    engine.prepare(actualSampleRate, actualBufferSize);
+    const auto numOutputChannels = juce::jmax(1, currentSettings.numOutputChannels);
+    audioWorkBuffer.setSize(numOutputChannels, samplesPerBlockExpected, false, true, false);
+    preparedAudioBlockSize = samplesPerBlockExpected;
+    preparedOutputChannels = numOutputChannels;
+
+    // Always prepare from values reported by the active device, rather than the
+    // requested settings (which the driver may have rejected or adjusted).
+    engine.prepare(sampleRate, samplesPerBlockExpected);
 }
 
 /**
@@ -174,20 +178,37 @@ void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate
  */
 void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
 {
-	// 現在のバッファ領域をクリア
     bufferToFill.clearActiveBufferRegion();
-    
-	// 一時バッファを作成
-    juce::AudioBuffer<float> tempBuffer(bufferToFill.buffer->getNumChannels(), bufferToFill.numSamples);
-    tempBuffer.clear(); // Start silent
-    
-	// エンジンでオーディオ処理
-    engine.processAudio(tempBuffer);
+
+    if (bufferToFill.buffer == nullptr
+        || bufferToFill.numSamples > preparedAudioBlockSize
+        || bufferToFill.buffer->getNumChannels() > preparedOutputChannels)
+        return;
+
+    // This only changes the logical view into storage allocated in prepareToPlay.
+    audioWorkBuffer.setSize(bufferToFill.buffer->getNumChannels(),
+                            bufferToFill.numSamples,
+                            false, false, true);
+    audioWorkBuffer.clear();
+    engine.processAudio(audioWorkBuffer);
+
+    for (int channel = 0; channel < audioWorkBuffer.getNumChannels(); ++channel)
+    {
+        bufferToFill.buffer->copyFrom(channel,
+                                      bufferToFill.startSample,
+                                      audioWorkBuffer,
+                                      channel,
+                                      0,
+                                      bufferToFill.numSamples);
+    }
 }
 
 void MainComponent::releaseResources()
 {
-    
+    engine.releaseResources();
+    audioWorkBuffer.clear();
+    preparedAudioBlockSize = 0;
+    preparedOutputChannels = 0;
 }
 
 /**
@@ -322,8 +343,23 @@ void MainComponent::loadPluginClicked()
             {
                 pluginNameLabel.setText(engine.getPluginName(), juce::dontSendNotification);
             }
+            else
+            {
+                showPluginLoadError();
+            }
         }
     });
+}
+
+void MainComponent::showPluginLoadError()
+{
+    auto message = engine.getLastPluginError();
+    if (message.isEmpty())
+        message = "The selected plug-in could not be loaded.";
+
+    juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+                                           "Plug-in Load Failed",
+                                           message);
 }
 
 /**
@@ -485,9 +521,24 @@ void MainComponent::applySettings(const SettingsComponent::Settings& newSettings
     
 	// オーディオチャネルを再設定
     setAudioChannels(newSettings.numInputChannels, newSettings.numOutputChannels, nullptr);
-    
-	// 新しいサンプルレートとバッファサイズでエンジンを準備
-    engine.prepare(newSettings.sampleRate, newSettings.bufferSize);
+
+    auto setup = deviceManager.getAudioDeviceSetup();
+    setup.sampleRate = newSettings.sampleRate;
+    setup.bufferSize = newSettings.bufferSize;
+    const auto deviceError = deviceManager.setAudioDeviceSetup(setup, true);
+
+    if (deviceError.isNotEmpty())
+    {
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+                                               "Audio Settings Failed",
+                                               deviceError);
+    }
+    else
+    {
+        const auto activeSetup = deviceManager.getAudioDeviceSetup();
+        currentSettings.sampleRate = activeSetup.sampleRate;
+        currentSettings.bufferSize = activeSetup.bufferSize;
+    }
     
     DBG("Settings applied: BufferSize=" << newSettings.bufferSize 
         << ", SampleRate=" << newSettings.sampleRate 
@@ -504,7 +555,7 @@ void MainComponent::showPluginBrowser()
 		// プラグインをロード
         juce::File pluginFile(desc.fileOrIdentifier);
         
-        if (pluginFile.existsAsFile() && engine.loadPlugin(pluginFile))
+        if (pluginFile.exists() && engine.loadPlugin(pluginFile))
         {
             pluginNameLabel.setText(engine.getPluginName(), juce::dontSendNotification);
             
@@ -514,6 +565,10 @@ void MainComponent::showPluginBrowser()
                 if (auto* dialogWindow = dynamic_cast<juce::DialogWindow*>(dialog))
                     dialogWindow->exitModalState(1);
             }
+        }
+        else
+        {
+            showPluginLoadError();
         }
     };
     

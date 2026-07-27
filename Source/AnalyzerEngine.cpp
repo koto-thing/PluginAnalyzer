@@ -39,6 +39,7 @@ AnalyzerEngine::AnalyzerEngine()
 
 AnalyzerEngine::~AnalyzerEngine()
 {
+    unloadPlugin();
 }
 
 void AnalyzerEngine::resizeFFTBuffers()
@@ -81,14 +82,42 @@ void AnalyzerEngine::setFFTOrder(int newFftOrder)
 
 void AnalyzerEngine::prepare(double sampleRate, int blockSize)
 {
+    jassert(sampleRate > 0.0);
+    jassert(blockSize > 0);
+
+    const juce::ScopedLock lock(pluginLock);
     signalGenerator.prepare(sampleRate, blockSize);
-    if (pluginInstance)
-        pluginInstance->prepareToPlay(sampleRate, blockSize);
-    
-    lastSampleRate = sampleRate;
-    lastBufferSize = blockSize;
     performanceData.sampleRate = sampleRate;
     performanceData.bufferSize = blockSize;
+
+    analysisInputBuffer.setSize(2, blockSize, false, true, false);
+
+    lastSampleRate = sampleRate;
+    lastBufferSize = blockSize;
+    if (pluginInstance)
+    {
+        if (pluginIsPrepared)
+            pluginInstance->releaseResources();
+
+        pluginProcessingBuffer.setSize(juce::jmax(pluginInputChannels, pluginOutputChannels),
+                                       blockSize,
+                                       false,
+                                       true,
+                                       false);
+        pluginInstance->setRateAndBufferSizeDetails(sampleRate, blockSize);
+        pluginInstance->prepareToPlay(sampleRate, blockSize);
+        pluginIsPrepared = true;
+    }
+}
+
+void AnalyzerEngine::releaseResources()
+{
+    const juce::ScopedLock lock(pluginLock);
+    if (pluginInstance && pluginIsPrepared)
+    {
+        pluginInstance->releaseResources();
+        pluginIsPrepared = false;
+    }
 }
 
 void AnalyzerEngine::setBlockSize(int /*newBlockSize*/)
@@ -99,7 +128,12 @@ void AnalyzerEngine::setBlockSize(int /*newBlockSize*/)
 
 bool AnalyzerEngine::loadPlugin(const juce::File& file)
 {
-    if (!file.existsAsFile()) return false;
+    if (!file.exists())
+    {
+        const juce::ScopedLock lock(pluginLock);
+        lastPluginError = "The selected plug-in does not exist:\n" + file.getFullPathName();
+        return false;
+    }
 
     juce::OwnedArray<juce::PluginDescription> foundPlugins;
     // Iterate formats
@@ -108,28 +142,80 @@ bool AnalyzerEngine::loadPlugin(const juce::File& file)
         format->findAllTypesForFile(foundPlugins, file.getFullPathName());
     }
 
-    if (foundPlugins.size() > 0)
+    if (!foundPlugins.isEmpty())
     {
         juce::String error;
-        // Verify formatManager is AudioPluginFormatManager
-        pluginInstance = formatManager.createPluginInstance(*foundPlugins[0], 44100.0, 512, error);
-        
-        if (pluginInstance)
+        double sampleRate = 0.0;
+        int blockSize = 0;
         {
-            DBG("Plugin Loaded: " << pluginInstance->getName());
-            pluginInstance->prepareToPlay(44100.0, 512);
-            triggerImpulseAnalysis(); // Auto start analysis
+            const juce::ScopedLock lock(pluginLock);
+            sampleRate = lastSampleRate;
+            blockSize = lastBufferSize;
+        }
+
+        auto candidate = formatManager.createPluginInstance(*foundPlugins[0],
+                                                             sampleRate,
+                                                             blockSize,
+                                                             error);
+
+        if (candidate)
+        {
+            const auto inputChannels = candidate->getTotalNumInputChannels();
+            const auto outputChannels = candidate->getTotalNumOutputChannels();
+
+            if (inputChannels < 1 || inputChannels > 2
+                || outputChannels < 1 || outputChannels > 2)
+            {
+                const juce::ScopedLock lock(pluginLock);
+                lastPluginError = "Unsupported bus layout for \"" + candidate->getName()
+                    + "\". PluginAnalyzer currently supports mono or stereo effects "
+                      "with one or two input and output channels.\n\nDetected: "
+                    + juce::String(inputChannels) + " input(s), "
+                    + juce::String(outputChannels) + " output(s).";
+                return false;
+            }
+
+            candidate->setNonRealtime(false);
+            candidate->setRateAndBufferSizeDetails(sampleRate, blockSize);
+            candidate->prepareToPlay(sampleRate, blockSize);
+
+            juce::AudioBuffer<float> newProcessingBuffer(
+                juce::jmax(inputChannels, outputChannels), blockSize);
+            newProcessingBuffer.clear();
+
+            {
+                const juce::ScopedLock lock(pluginLock);
+                if (pluginInstance && pluginIsPrepared)
+                    pluginInstance->releaseResources();
+
+                pluginInstance = std::move(candidate);
+                pluginProcessingBuffer = std::move(newProcessingBuffer);
+                pluginInputChannels = inputChannels;
+                pluginOutputChannels = outputChannels;
+                pluginIsPrepared = true;
+                lastPluginError.clear();
+                triggerImpulseAnalysis();
+            }
+
+            DBG("Plugin Loaded: " << getPluginName()
+                << " at " << sampleRate << " Hz / " << blockSize << " samples");
             sendChangeMessage(); // Notify UI
             return true;
         }
         else
         {
             DBG("Failed to create plugin instance: " << error);
+            const juce::ScopedLock lock(pluginLock);
+            lastPluginError = error.isNotEmpty()
+                ? error
+                : "The plug-in instance could not be created.";
         }
     }
     else
     {
         DBG("No plugin types found in file.");
+        const juce::ScopedLock lock(pluginLock);
+        lastPluginError = "No supported plug-in type was found at:\n" + file.getFullPathName();
     }
     
     return false;
@@ -137,8 +223,31 @@ bool AnalyzerEngine::loadPlugin(const juce::File& file)
 
 void AnalyzerEngine::unloadPlugin()
 {
-    pluginInstance = nullptr;
+    {
+        const juce::ScopedLock lock(pluginLock);
+        if (pluginInstance && pluginIsPrepared)
+            pluginInstance->releaseResources();
+
+        pluginInstance.reset();
+        pluginProcessingBuffer.setSize(0, 0);
+        pluginInputChannels = 0;
+        pluginOutputChannels = 0;
+        pluginIsPrepared = false;
+        lastPluginError.clear();
+    }
     sendChangeMessage();
+}
+
+juce::String AnalyzerEngine::getPluginName() const
+{
+    const juce::ScopedLock lock(pluginLock);
+    return pluginInstance ? pluginInstance->getName() : "No Plugin Loaded";
+}
+
+juce::String AnalyzerEngine::getLastPluginError() const
+{
+    const juce::ScopedLock lock(pluginLock);
+    return lastPluginError;
 }
 
 void AnalyzerEngine::triggerImpulseAnalysis()
@@ -185,7 +294,7 @@ void AnalyzerEngine::calculateTHD()
 {
     // Calculate THD from magnitude spectrum (Left channel)
     double testFreq = signalGenerator.getFrequency();
-    double binWidth = 44100.0 / fftSize; // Sample rate / FFT size
+    double binWidth = lastSampleRate / fftSize; // Sample rate / FFT size
     
     int fundamentalBin = (int)(testFreq / binWidth + 0.5);
     
@@ -309,16 +418,17 @@ void AnalyzerEngine::analyzeEnvelope(const juce::AudioBuffer<float>& buffer)
         float absValue = std::abs(data[i]);
         
         // Simple time point (in seconds)
-        float timePoint = (float)envelopeData.envelopeValues.size() / 44100.0f;
+        float timePoint = (float)(envelopeData.envelopeValues.size() / lastSampleRate);
         
         envelopeData.timePoints.push_back(timePoint);
         envelopeData.envelopeValues.push_back(absValue);
     }
     
     // Keep only recent envelope data
-    if (envelopeData.envelopeValues.size() > 44100 * 10) // Max 10 seconds
+    const auto maxEnvelopeSamples = static_cast<size_t>(lastSampleRate * 10.0);
+    if (envelopeData.envelopeValues.size() > maxEnvelopeSamples) // Max 10 seconds
     {
-        int excess = (int)envelopeData.envelopeValues.size() - 44100 * 10;
+        int excess = (int)(envelopeData.envelopeValues.size() - maxEnvelopeSamples);
         envelopeData.timePoints.erase(envelopeData.timePoints.begin(), envelopeData.timePoints.begin() + excess);
         envelopeData.envelopeValues.erase(envelopeData.envelopeValues.begin(), envelopeData.envelopeValues.begin() + excess);
     }
@@ -379,6 +489,11 @@ void AnalyzerEngine::updatePerformanceMetrics(double processingTimeMs)
 
 void AnalyzerEngine::processAudio(juce::AudioBuffer<float>& buffer)
 {
+    // Serialise the complete callback against plug-in replacement, release, and
+    // re-prepare. The lock is never taken while scanning or constructing a new
+    // plug-in, only during the short lifecycle hand-off.
+    const juce::ScopedLock lifecycleLock(pluginLock);
+
     // In Harmonic/WhiteNoise/SineSweep/THDSweep/Performance mode, we always run. In Linear, we wait for trigger.
     if (currentMode == AnalysisMode::Linear && !isAnalyzing) return;
     if (currentMode == AnalysisMode::Harmonic || 
@@ -390,7 +505,10 @@ void AnalyzerEngine::processAudio(juce::AudioBuffer<float>& buffer)
         currentMode == AnalysisMode::Performance) 
         isAnalyzing = true; 
 
-    int numSamples = buffer.getNumSamples();
+    const int numSamples = buffer.getNumSamples();
+    const int numChannels = buffer.getNumChannels();
+    if (numSamples <= 0 || numChannels <= 0)
+        return;
     
     // 1. Generate Signal
     TestSignalGenerator::SignalType sigType;
@@ -427,38 +545,68 @@ void AnalyzerEngine::processAudio(juce::AudioBuffer<float>& buffer)
     
     signalGenerator.fillBuffer(buffer, sigType, 0);
     
-    if (buffer.getNumChannels() > 1)
-        buffer.copyFrom(1, 0, buffer, 0, 0, numSamples);
+    for (int channel = 1; channel < numChannels; ++channel)
+        buffer.copyFrom(channel, 0, buffer, 0, 0, numSamples);
 
-    // Store input buffer for dynamics analysis
-    juce::AudioBuffer<float> inputBuffer(buffer.getNumChannels(), numSamples);
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-        inputBuffer.copyFrom(ch, 0, buffer, ch, 0, numSamples);
+    // Store the generated input in memory allocated by prepare().
+    const bool canCaptureInput = numChannels <= 2 && numSamples <= lastBufferSize;
+    if (canCaptureInput)
+    {
+        analysisInputBuffer.setSize(numChannels, numSamples, false, false, true);
+        for (int channel = 0; channel < numChannels; ++channel)
+            analysisInputBuffer.copyFrom(channel, 0, buffer, channel, 0, numSamples);
+    }
 
     // 2. Process Plugin with performance measurement
-    if (pluginInstance)
+    if (pluginInstance && pluginIsPrepared
+        && numSamples <= lastBufferSize)
     {
-        // Start timing
-        auto startTime = juce::Time::getMillisecondCounterHiRes();
-        
-        juce::MidiBuffer midi;
-        pluginInstance->processBlock(buffer, midi);
-        
-        // End timing
-        auto endTime = juce::Time::getMillisecondCounterHiRes();
-        double processingTimeMs = endTime - startTime;
-        
-        // Update performance metrics
-        if (currentMode == AnalysisMode::Performance)
+        const auto pluginBufferChannels = juce::jmax(pluginInputChannels, pluginOutputChannels);
+        pluginProcessingBuffer.setSize(pluginBufferChannels,
+                                       numSamples,
+                                       false,
+                                       false,
+                                       true);
+        pluginProcessingBuffer.clear();
+
+        for (int channel = 0; channel < pluginInputChannels; ++channel)
         {
-            updatePerformanceMetrics(processingTimeMs);
+            const auto sourceChannel = juce::jmin(channel, numChannels - 1);
+            pluginProcessingBuffer.copyFrom(channel,
+                                            0,
+                                            buffer,
+                                            sourceChannel,
+                                            0,
+                                            numSamples);
         }
+
+        const auto startTime = juce::Time::getMillisecondCounterHiRes();
+        juce::MidiBuffer midi;
+        pluginInstance->processBlock(pluginProcessingBuffer, midi);
+        const auto processingTimeMs =
+            juce::Time::getMillisecondCounterHiRes() - startTime;
+
+        buffer.clear();
+        for (int channel = 0; channel < numChannels; ++channel)
+        {
+            const auto sourceChannel = juce::jmin(channel, pluginOutputChannels - 1);
+            buffer.copyFrom(channel,
+                            0,
+                            pluginProcessingBuffer,
+                            sourceChannel,
+                            0,
+                            numSamples);
+        }
+
+        if (currentMode == AnalysisMode::Performance)
+            updatePerformanceMetrics(processingTimeMs);
     }
 
     // 3. Dynamics Analysis (for Dynamics and Hammerstein modes)
     if (currentMode == AnalysisMode::Dynamics)
     {
-        analyzeDynamics(inputBuffer, buffer);
+        if (canCaptureInput)
+            analyzeDynamics(analysisInputBuffer, buffer);
     }
     else if (currentMode == AnalysisMode::Hammerstein)
     {

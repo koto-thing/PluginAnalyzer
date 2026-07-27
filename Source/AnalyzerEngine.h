@@ -11,6 +11,7 @@ public:
 
     // Setup
     void prepare(double sampleRate, int blockSize);
+    void releaseResources();
     void setBlockSize(int newBlockSize);
     
     // Configuration
@@ -21,8 +22,8 @@ public:
     // Plugin Management
     bool loadPlugin(const juce::File& file);
     void unloadPlugin();
-    juce::AudioPluginInstance* getPluginInstance() { return pluginInstance.get(); }
-    juce::String getPluginName() const { return pluginInstance ? pluginInstance->getName() : "No Plugin Loaded"; }
+    juce::String getPluginName() const;
+    juce::String getLastPluginError() const;
 
     enum class AnalysisMode
     {
@@ -112,6 +113,13 @@ public:
 private:
     std::unique_ptr<juce::AudioPluginInstance> pluginInstance;
     juce::AudioPluginFormatManager formatManager;
+    mutable juce::CriticalSection pluginLock;
+    juce::AudioBuffer<float> pluginProcessingBuffer;
+    juce::AudioBuffer<float> analysisInputBuffer;
+    juce::String lastPluginError;
+    bool pluginIsPrepared = false;
+    int pluginInputChannels = 0;
+    int pluginOutputChannels = 0;
 
     TestSignalGenerator signalGenerator;
     AnalysisMode currentMode = AnalysisMode::Linear;
